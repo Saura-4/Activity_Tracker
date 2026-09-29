@@ -20,6 +20,9 @@ async function init() {
   await loadSettings();
   await loadState();
   
+  // Flush any offline queued events immediately
+  processQueue();
+  
   try {
     const win = await chrome.windows.getCurrent();
     if (win && win.focused) {

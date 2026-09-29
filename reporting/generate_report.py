@@ -159,6 +159,12 @@ def get_context_key(event: Dict[str, Any]) -> Tuple:
             ctx.get("title"),
             ctx.get("url"),
         )
+    elif source == "mobile":
+        return (
+            "mobile",
+            ctx.get("app"),
+            ctx.get("package"),
+        )
     return (source, tuple(sorted((k, str(v)) for k, v in ctx.items())))
 
 
@@ -263,6 +269,13 @@ def clean_context_for_report(source: str, ctx: Dict[str, Any]) -> Dict[str, Any]
         if "language" in ctx:
             clean["language"] = ctx["language"]
         return clean
+    elif source == "mobile":
+        clean = {}
+        if "app" in ctx:
+            clean["app"] = ctx["app"]
+        if "package" in ctx:
+            clean["package"] = ctx["package"]
+        return clean
     return {k: v for k, v in ctx.items() if k not in ("url", "tab_id", "window_id")}
 
 
@@ -304,10 +317,12 @@ def aggregate_events(
     total_seconds = 0.0
     browser_seconds = 0.0
     vscode_seconds = 0.0
+    mobile_seconds = 0.0
 
     source_counts = defaultdict(lambda: {"duration": 0.0, "count": 0})
     domain_stats = defaultdict(lambda: {"duration": 0.0, "count": 0})
     title_stats = defaultdict(lambda: {"duration": 0.0, "count": 0, "domain": ""})
+    app_stats = defaultdict(lambda: {"duration": 0.0, "count": 0, "package": ""})
     workspace_stats = defaultdict(lambda: {
         "duration": 0.0,
         "count": 0,
@@ -315,7 +330,7 @@ def aggregate_events(
         "files": set(),
     })
     language_stats = defaultdict(lambda: {"duration": 0.0, "count": 0})
-    hourly = defaultdict(lambda: {"active": 0.0, "browser": 0.0, "vscode": 0.0})
+    hourly = defaultdict(lambda: {"active": 0.0, "browser": 0.0, "vscode": 0.0, "mobile": 0.0})
 
     timeline = []
 
@@ -355,6 +370,13 @@ def aggregate_events(
             language_stats[lang]["duration"] += dur
             language_stats[lang]["count"] += 1
 
+        elif source == "mobile":
+            mobile_seconds += dur
+            app = ctx.get("app", "unknown")
+            app_stats[app]["duration"] += dur
+            app_stats[app]["count"] += 1
+            app_stats[app]["package"] = ctx.get("package", "")
+
         # Hourly breakdown: bucket each raw event's active duration into hours
         for raw_e in s["raw_events"]:
             try:
@@ -367,6 +389,8 @@ def aggregate_events(
                         hourly[h]["browser"] += secs
                     elif source == "vscode":
                         hourly[h]["vscode"] += secs
+                    elif source == "mobile":
+                        hourly[h]["mobile"] += secs
             except Exception:
                 pass
 
@@ -449,6 +473,21 @@ def aggregate_events(
         reverse=True,
     )
 
+    apps = sorted(
+        [
+            {
+                "app": a,
+                "package": st["package"],
+                "duration_seconds": round(st["duration"], 1),
+                "session_count": st["count"],
+                "percentage": round(st["duration"] / total_seconds * 100, 1) if total_seconds > 0 else 0,
+            }
+            for a, st in app_stats.items()
+        ],
+        key=lambda x: x["duration_seconds"],
+        reverse=True,
+    )
+
     sources = {
         src: {
             "duration_seconds": round(st["duration"], 1),
@@ -481,6 +520,7 @@ def aggregate_events(
                 "active_seconds": round(st["active"], 1),
                 "browser_seconds": round(st["browser"], 1),
                 "vscode_seconds": round(st["vscode"], 1),
+                "mobile_seconds": round(st["mobile"], 1),
             }
             for h, st in hourly.items()
         ],
@@ -492,6 +532,7 @@ def aggregate_events(
             "total_active_seconds": round(total_seconds, 1),
             "browser_seconds": round(browser_seconds, 1),
             "vscode_seconds": round(vscode_seconds, 1),
+            "mobile_seconds": round(mobile_seconds, 1),
             "session_count": len(logical_sessions),
             "context_switches": context_switches,
             "first_activity": earliest_start.astimezone(report_tz).isoformat(),
@@ -504,6 +545,7 @@ def aggregate_events(
         "titles": titles,
         "workspaces": workspaces,
         "languages": languages,
+        "apps": apps,
         "longest_sessions": longest_sessions,
         "timeline": timeline,
         "hourly_breakdown": hourly_breakdown,
@@ -517,6 +559,7 @@ def _empty_report() -> Dict[str, Any]:
             "total_active_seconds": 0.0,
             "browser_seconds": 0.0,
             "vscode_seconds": 0.0,
+            "mobile_seconds": 0.0,
             "session_count": 0,
             "context_switches": 0,
             "first_activity": None,
@@ -529,10 +572,27 @@ def _empty_report() -> Dict[str, Any]:
         "titles": [],
         "workspaces": [],
         "languages": [],
+        "apps": [],
         "longest_sessions": [],
         "timeline": [],
         "hourly_breakdown": [],
     }
+
+
+def read_day_events(data_directory: str, date_str: str) -> List[Dict[str, Any]]:
+    """Read events for a date from PC file (raw/YYYY-MM-DD.jsonl) and Mobile file (raw/mobile/YYYY-MM-DD.jsonl)."""
+    raw_dir = Path(data_directory) / "raw"
+    events = []
+
+    pc_file = raw_dir / f"{date_str}.jsonl"
+    if pc_file.exists():
+        events.extend(read_events(str(pc_file)))
+
+    mobile_file = raw_dir / "mobile" / f"{date_str}.jsonl"
+    if mobile_file.exists():
+        events.extend(read_events(str(mobile_file)))
+
+    return events
 
 
 def generate_single_day_report(
@@ -542,16 +602,19 @@ def generate_single_day_report(
 ) -> Dict[str, Any]:
     """Generate a daily report from the complete day's raw JSONL data.
     
-    Reads all events in raw/YYYY-MM-DD.jsonl and fully materializes
-    a fresh report. Overwrites previous reports cleanly.
+    Reads all events in raw/YYYY-MM-DD.jsonl (and raw/mobile/YYYY-MM-DD.jsonl)
+    and fully materializes a fresh report. Overwrites previous reports cleanly.
     """
     if merge_gap_seconds is None:
         merge_gap_seconds = getattr(config, "session_merge_gap_seconds", DEFAULT_SESSION_MERGE_GAP_SECONDS)
 
     filepath = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
-    print(f"Reading: {filepath}")
+    mobile_filepath = Path(config.data_directory) / "raw" / "mobile" / f"{date_str}.jsonl"
+    print(f"Reading PC: {filepath}")
+    if mobile_filepath.exists():
+        print(f"Reading mobile: {mobile_filepath}")
 
-    events = read_events(str(filepath))
+    events = read_day_events(config.data_directory, date_str)
     report = aggregate_events(events, merge_gap_seconds=merge_gap_seconds)
     report["generated_at"] = datetime.now().astimezone().isoformat()
     report["date"] = date_str
@@ -578,9 +641,12 @@ def generate_range_report(
     while current <= end:
         date_str = current.isoformat()
         filepath = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
+        mobile_filepath = Path(config.data_directory) / "raw" / "mobile" / f"{date_str}.jsonl"
         print(f"Reading: {filepath}")
+        if mobile_filepath.exists():
+            print(f"Reading mobile: {mobile_filepath}")
 
-        events = read_events(str(filepath))
+        events = read_day_events(config.data_directory, date_str)
         day_report = aggregate_events(events, merge_gap_seconds=merge_gap_seconds)
         daily_summaries.append({
             "date": date_str,
@@ -632,6 +698,11 @@ def print_summary(report: Dict[str, Any]):
     vh, vm = int(vscode // 3600), int((vscode % 3600) // 60)
     print(f"VS Code time:          {vh}h {vm}m ({round(vscode, 1)}s)")
 
+    mobile = s.get("mobile_seconds", 0)
+    if mobile > 0:
+        mh, mm = int(mobile // 3600), int((mobile % 3600) // 60)
+        print(f"Mobile screen time:    {mh}h {mm}m ({round(mobile, 1)}s)")
+
     span = s.get("observed_span_seconds", 0)
     sh, sm = int(span // 3600), int((span % 3600) // 60)
     print(f"Observed span:         {sh}h {sm}m ({round(span, 1)}s)")
@@ -668,13 +739,21 @@ def print_summary(report: Dict[str, Any]):
             ws_sec = int(w['duration_seconds'] % 60)
             print(f"  {w['workspace']:30s} {wm}m {ws_sec:02d}s ({w['session_count']} sessions, {w['files_touched']} files)")
 
+    apps = report.get("apps", [])
+    if apps:
+        print(f"\nTop mobile apps:")
+        for a in apps[:5]:
+            am = int(a['duration_seconds'] // 60)
+            as_sec = int(a['duration_seconds'] % 60)
+            print(f"  {a['app']:30s} {am}m {as_sec:02d}s ({a['session_count']} sessions, {a['percentage']}%)")
+
     longest = report.get("longest_sessions", [])
     if longest:
         print(f"\nLongest logical sessions:")
         for idx, ls in enumerate(longest[:5], 1):
             dur_m = round(ls['duration_seconds'] / 60, 1)
             ctx = ls.get("context", {})
-            name = ctx.get("title") or ctx.get("file") or ctx.get("domain") or "unknown"
+            name = ctx.get("title") or ctx.get("file") or ctx.get("app") or ctx.get("domain") or "unknown"
             print(f"  {idx}. {ls['source']:7s} | {dur_m:4.1f}m ({ls['duration_seconds']}s) | {name[:35]}")
 
     print("=" * 55)

@@ -3,5 +3,17 @@
   "collector_host": "127.0.0.1",
   "collector_port": 8765,
   "strip_query_strings": true,
-  "session_merge_gap_seconds": 30.0
+  "session_merge_gap_seconds": 30.0,
+  "android": {
+    "enabled": true,
+    "device_ip": "192.168.1.100",
+    "port": 5555,
+    "ignore_packages": [
+      "android",
+      "com.sec.android.app.launcher",
+      "com.android.systemui",
+      "com.sec.android.app.clockpackage",
+      "com.google.android.permissioncontroller"
+    ]
+  }
 }

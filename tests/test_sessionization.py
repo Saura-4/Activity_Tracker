@@ -784,3 +784,54 @@ class TestRequirement13H_ReportRegeneration:
         assert disk_report["summary"]["session_count"] == 2
         assert disk_report["summary"]["total_active_seconds"] == 2100.0
 
+
+# =============================================================================
+# Mobile Screen Time & Multi-Source Tests
+# =============================================================================
+class TestMobileSessionization:
+    def test_mobile_session_merge(self):
+        """Consecutive events of same mobile app within 30s merge without adding gap."""
+        from tests.conftest import make_mobile_event
+        events = [
+            make_mobile_event(ts(14, 0, 0), ts(14, 5, 0), "WhatsApp", "com.whatsapp"),
+            make_mobile_event(ts(14, 5, 20), ts(14, 10, 0), "WhatsApp", "com.whatsapp"),  # 20s gap
+        ]
+
+        report = aggregate_events(events, merge_gap_seconds=30.0)
+
+        assert report["summary"]["session_count"] == 1
+        assert report["summary"]["total_active_seconds"] == 580.0  # 300s + 280s (gap not added)
+        assert report["summary"]["mobile_seconds"] == 580.0
+        assert len(report["apps"]) == 1
+        assert report["apps"][0]["app"] == "WhatsApp"
+        assert report["apps"][0]["duration_seconds"] == 580.0
+
+    def test_multisource_browser_vscode_mobile(self):
+        """Report combines browser, VS Code, and mobile sources cleanly."""
+        from tests.conftest import make_mobile_event
+        events = [
+            make_browser_event(ts(10, 0, 0), ts(10, 30, 0), "github.com", "GitHub"),
+            make_vscode_event(ts(10, 30, 0), ts(11, 0, 0), "activity-tracker", "main.py", "python"),
+            make_mobile_event(ts(11, 0, 0), ts(11, 20, 0), "Twitter / X", "com.twitter.android"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["session_count"] == 3
+        assert report["summary"]["context_switches"] == 2
+        assert report["summary"]["browser_seconds"] == 1800.0
+        assert report["summary"]["vscode_seconds"] == 1800.0
+        assert report["summary"]["mobile_seconds"] == 1200.0
+        assert report["summary"]["total_active_seconds"] == 4800.0
+
+        # Timeline has clean context without url/tab_id
+        assert report["timeline"][2]["source"] == "mobile"
+        assert report["timeline"][2]["context"]["app"] == "Twitter / X"
+        assert report["timeline"][2]["context"]["package"] == "com.twitter.android"
+
+        # Apps section populated
+        assert len(report["apps"]) == 1
+        assert report["apps"][0]["app"] == "Twitter / X"
+        assert report["apps"][0]["duration_seconds"] == 1200.0
+
+

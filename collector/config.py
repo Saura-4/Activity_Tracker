@@ -3,6 +3,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from typing import Dict, Any, Optional
+
 @dataclass
 class Config:
     data_directory: str = "D:\\ActivityTracker"
@@ -10,6 +12,17 @@ class Config:
     collector_port: int = 8765
     strip_query_strings: bool = True
     session_merge_gap_seconds: float = 30.0
+    android: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.android is None:
+            self.android = {}
+
+    def __getitem__(self, item):
+        return getattr(self, item)
+
+    def get(self, item, default=None):
+        return getattr(self, item, default)
 
 def get_config() -> Config:
     config = Config()
@@ -49,6 +62,8 @@ def get_config() -> Config:
                         config.strip_query_strings = data["strip_query_strings"]
                     if "session_merge_gap_seconds" in data:
                         config.session_merge_gap_seconds = float(data["session_merge_gap_seconds"])
+                    if "android" in data:
+                        config.android = data["android"]
                 break
             except Exception as e:
                 print(f"Error loading config from {p}: {e}")
