@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Activity Tracker",
+  "version": "1.0.0",
+  "description": "Local activity tracking for browser tabs",
+  "permissions": ["tabs", "storage", "windows", "activeTab", "idle"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "config.html",
+  "icons": {}
+}

@@ -1,0 +1,7 @@
+{
+  "data_directory": "../Record",
+  "collector_host": "127.0.0.1",
+  "collector_port": 8765,
+  "strip_query_strings": true,
+  "session_merge_gap_seconds": 30.0
+}

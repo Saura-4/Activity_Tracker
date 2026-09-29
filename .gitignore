@@ -1,0 +1,40 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# VS Code extension build
+vscode-extension/out/
+*.vsix
+
+# Activity data (sensitive)
+D:/ActivityTracker/
+Record/
+raw/
+reports/
+analysis/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Config (may contain personal paths)
+config.json
+
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage

@@ -1,0 +1,52 @@
+{
+  "name": "activity-tracker-vscode",
+  "displayName": "Activity Tracker",
+  "description": "Local activity tracking for VS Code",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Activity Tracker",
+      "properties": {
+        "activityTracker.collectorUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8765",
+          "description": "URL of the local activity collector"
+        },
+        "activityTracker.minSessionDuration": {
+          "type": "number",
+          "default": 1,
+          "description": "Minimum session duration in seconds to record"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "activityTracker.showStatus",
+        "title": "Activity Tracker: Show Status"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.x",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.1.x"
+  }
+}
