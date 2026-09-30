@@ -607,7 +607,6 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         for (let d = 0; d < 7; d++) {{
           const cur = new Date(startSunday.getTime() + (w * 7 + d) * 86400000);
           const dateStr = cur.toISOString().split("T")[0];
-          const isSelected = dateStr === currentDate;
           const isFuture = cur.getTime() > (new Date(maxDateStr + "T23:59:59Z")).getTime();
 
           const rep = REPORTS_DATABASE[dateStr];
@@ -638,10 +637,6 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
             baseClass += " opacity-20 pointer-events-none";
           }} else {{
             baseClass += " hover:scale-125 hover:z-20 cursor-pointer";
-          }}
-
-          if (isSelected) {{
-            baseClass += " ring-2 ring-sky-400 ring-offset-1 ring-offset-black scale-125 z-10 shadow-lg shadow-sky-500/40";
           }}
 
           block.className = baseClass;
