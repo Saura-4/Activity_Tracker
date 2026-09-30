@@ -1,11 +1,14 @@
 """
-Generates an interactive, standalone HTML dashboard from activity tracker JSON reports.
+Generates an interactive, standalone HTML dashboard from activity tracker JSON reports
+and Markdown analysis journals.
+
 Features:
 - Multi-source visualization (Browser, VS Code, Desktop, Mobile)
+- Synchronized Executive Markdown Journal (.md) + Quantitative Metrics (.json)
 - 24-hour interactive session timeline strip
 - Hourly activity stacked bar chart
 - Category and app leaderboards
-- Multi-day switching and custom report drag-and-drop
+- Multi-day switching, date synchronization, and custom report drag-and-drop
 """
 
 import argparse
@@ -25,8 +28,9 @@ def format_duration(seconds: float) -> str:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
 
-def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str:
-    data_json = json.dumps(reports_data)
+def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, str], initial_date: str) -> str:
+    reports_json = json.dumps(reports_data)
+    analyses_json = json.dumps(analyses_data)
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -63,10 +67,6 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       background: #334155;
       border-radius: 4px;
     }}
-    .tooltip-active {{
-      pointer-events: none;
-      transition: opacity 0.15s ease, transform 0.15s ease;
-    }}
   </style>
 </head>
 <body class="antialiased p-4 sm:p-6 lg:p-8 selection:bg-sky-500/30 selection:text-sky-200">
@@ -98,11 +98,30 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
         <!-- Custom JSON loader -->
         <label class="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-          Load Report
-          <input type="file" id="file-input" accept=".json" class="hidden">
+          Load Report (.json/.md)
+          <input type="file" id="file-input" accept=".json,.md" class="hidden">
         </label>
       </div>
     </header>
+
+    <!-- View Mode Selector Tabs -->
+    <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+      <div class="inline-flex p-1 bg-slate-900 rounded-xl border border-slate-800 text-xs font-medium" id="main-view-tabs">
+        <button data-tab="split" class="tab-btn px-3 py-1.5 rounded-lg bg-sky-500 text-white font-medium transition flex items-center gap-1.5">
+          <span>📊</span> Split Dashboard & Journal
+        </button>
+        <button data-tab="analytics" class="tab-btn px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
+          <span>📈</span> Full Analytics & Charts
+        </button>
+        <button data-tab="journal" class="tab-btn px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
+          <span>📝</span> Executive Journal (.md)
+        </button>
+      </div>
+
+      <div id="has-analysis-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
+        <span>✓</span> Daily Audit Markdown Attached
+      </div>
+    </div>
 
     <!-- KPI Metric Cards Grid -->
     <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -138,8 +157,29 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       </div>
     </section>
 
+    <!-- Executive Journal (.md) Section (Rendered when in 'split' or 'journal' mode) -->
+    <section id="journal-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800/80 gap-2">
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold text-sm">
+            📝
+          </div>
+          <div>
+            <h2 class="text-base font-bold text-[var(--foreground)]" id="journal-heading">Executive Behavioral Audit & Journal</h2>
+            <p class="text-xs text-[var(--muted-foreground)]" id="journal-filepath">Loaded from Record/analysis/YYYY/mmm/daily/{initial_date}.md</p>
+          </div>
+        </div>
+        <div class="text-xs text-slate-400 font-mono" id="journal-date-tag">Date: --</div>
+      </div>
+
+      <!-- Rendered Markdown Body -->
+      <div id="journal-content-container" class="prose prose-invert max-w-none text-slate-200">
+        <!-- Rendered markdown goes here -->
+      </div>
+    </section>
+
     <!-- Source Split & Device Distribution -->
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
+    <section id="analytics-split-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h2 class="text-base font-bold text-[var(--foreground)]">Device & Channel Allocation</h2>
@@ -192,7 +232,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
     </section>
 
     <!-- 24-Hour Gantt Timeline Strip -->
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
+    <section id="analytics-ribbon-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h2 class="text-base font-bold text-[var(--foreground)]">24-Hour Chronological Activity Ribbon</h2>
@@ -237,7 +277,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
     </section>
 
     <!-- Hourly Focus Density Chart & Longest Sessions -->
-    <section class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <section id="analytics-charts-section" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
       <!-- Hourly Stacked Bar Chart -->
       <div class="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
@@ -274,7 +314,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
     </section>
 
     <!-- Detailed Leaderboards Grid (Domains, Mobile Apps, Desktop Apps) -->
-    <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <section id="analytics-leaderboards-section" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
       
       <!-- Domains Card -->
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4 flex flex-col">
@@ -318,7 +358,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
     </section>
 
     <!-- Comprehensive Filterable Timeline Table -->
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
+    <section id="analytics-ledger-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 class="text-base font-bold text-[var(--foreground)]">Chronological Activity Ledger</h2>
@@ -353,10 +393,12 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
 
   <!-- Embedded Data & Client Controller -->
   <script>
-    const REPORTS_DATABASE = {data_json};
+    const REPORTS_DATABASE = {reports_json};
+    const ANALYSES_DATABASE = {analyses_json};
     let currentDate = "{initial_date}";
     let currentFilter = "all";
     let searchQuery = "";
+    let activeMainTab = "split"; // 'split', 'analytics', 'journal'
 
     function formatSecs(secs) {{
       const s = Math.round(secs);
@@ -377,16 +419,139 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       return isoStr;
     }}
 
+    function escapeHtml(text) {{
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }}
+
+    function inlineFormat(text) {{
+      let t = escapeHtml(text);
+      // Bold
+      t = t.replace(/\\*\\*(.+?)\\*\\*/g, '<strong class="text-white font-semibold">$1</strong>');
+      // Italic
+      t = t.replace(/\\*(.+?)\\*/g, '<em class="italic text-slate-300">$1</em>');
+      // Inline code
+      t = t.replace(/`([^`]+)`/g, '<code class="bg-slate-900 text-sky-300 px-1.5 py-0.5 rounded text-[11px] font-mono border border-slate-800">$1</code>');
+      // Links
+      t = t.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href="$2" target="_blank" class="text-sky-400 hover:text-sky-300 underline">$1</a>');
+      return t;
+    }}
+
+    function renderMarkdown(md) {{
+      if (!md || !md.trim()) {{
+        const parts = currentDate.split("-");
+        const yr = parts[0] || "2026";
+        const mNames = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+        const mmm = (parts[1] && parseInt(parts[1]) > 0 && parseInt(parts[1]) <= 12) ? mNames[parseInt(parts[1]) - 1] : "sep";
+        return `
+          <div class="p-8 text-center bg-slate-900/40 border border-dashed border-slate-800 rounded-xl space-y-3">
+            <div class="text-3xl">📝</div>
+            <div class="text-sm font-semibold text-slate-300">No Analysis Journal Recorded for ${{currentDate}}</div>
+            <p class="text-xs text-slate-500 max-w-md mx-auto">
+              You can add your executive daily audit by placing a markdown file at:<br>
+              <code class="text-sky-400 bg-slate-950 px-2 py-1 rounded mt-2 inline-block border border-slate-800">
+                Record/analysis/${{yr}}/${{mmm}}/daily/${{currentDate}}.md
+              </code>
+            </p>
+          </div>
+        `;
+      }}
+
+      const lines = md.split('\\n');
+      let html = [];
+      let inList = false;
+      let inCode = false;
+      let codeBuffer = [];
+
+      for (let i = 0; i < lines.length; i++) {{
+        let line = lines[i];
+
+        if (line.trim().startsWith('```')) {{
+          if (inCode) {{
+            html.push('<pre class="bg-slate-950 border border-slate-800 rounded-xl p-4 my-3 text-xs font-mono text-sky-300 overflow-x-auto custom-scroll"><code>' + escapeHtml(codeBuffer.join('\\n')) + '</code></pre>');
+            codeBuffer = [];
+            inCode = false;
+          }} else {{
+            inCode = true;
+          }}
+          continue;
+        }}
+        if (inCode) {{
+          codeBuffer.push(line);
+          continue;
+        }}
+
+        if (line.trim() === '---' || line.trim() === '***') {{
+          if (inList) {{ html.push('</ul>'); inList = false; }}
+          html.push('<hr class="border-slate-800 my-5">');
+          continue;
+        }}
+
+        if (line.startsWith('# ')) {{
+          if (inList) {{ html.push('</ul>'); inList = false; }}
+          html.push('<h1 class="text-xl sm:text-2xl font-extrabold text-white tracking-tight mb-3 mt-1 flex items-center gap-2">' + inlineFormat(line.slice(2)) + '</h1>');
+          continue;
+        }}
+        if (line.startsWith('## ')) {{
+          if (inList) {{ html.push('</ul>'); inList = false; }}
+          html.push('<h2 class="text-base sm:text-lg font-bold text-sky-300 tracking-tight mt-5 mb-2.5 flex items-center gap-2 border-b border-slate-800/80 pb-1.5">' + inlineFormat(line.slice(3)) + '</h2>');
+          continue;
+        }}
+        if (line.startsWith('### ')) {{
+          if (inList) {{ html.push('</ul>'); inList = false; }}
+          html.push('<h3 class="text-sm font-bold text-indigo-300 tracking-tight mt-4 mb-2">' + inlineFormat(line.slice(4)) + '</h3>');
+          continue;
+        }}
+
+        if (line.startsWith('> ')) {{
+          if (inList) {{ html.push('</ul>'); inList = false; }}
+          html.push('<blockquote class="p-3 my-2.5 bg-slate-900/90 border-l-4 border-sky-500 rounded-r-xl text-xs text-slate-300 space-y-1">' + inlineFormat(line.slice(2)) + '</blockquote>');
+          continue;
+        }}
+
+        if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {{
+          if (!inList) {{
+            html.push('<ul class="space-y-1.5 my-2 text-xs text-slate-300 list-disc list-inside">');
+            inList = true;
+          }}
+          html.push('<li class="leading-relaxed">' + inlineFormat(line.trim().slice(2)) + '</li>');
+          continue;
+        }} else {{
+          if (inList) {{
+            html.push('</ul>');
+            inList = false;
+          }}
+        }}
+
+        if (!line.trim()) continue;
+
+        html.push('<p class="text-xs text-slate-300 leading-relaxed mb-2.5">' + inlineFormat(line) + '</p>');
+      }}
+
+      if (inList) html.push('</ul>');
+      return html.join('');
+    }}
+
     function initDateButtons() {{
       const container = document.getElementById("date-buttons-container");
       container.innerHTML = "";
-      const dates = Object.keys(REPORTS_DATABASE).sort().reverse();
+      
+      const allDatesSet = new Set([...Object.keys(REPORTS_DATABASE), ...Object.keys(ANALYSES_DATABASE)]);
+      const dates = Array.from(allDatesSet).sort().reverse();
       
       dates.forEach(d => {{
         const btn = document.createElement("button");
         const isActive = d === currentDate;
+        const hasReport = !!REPORTS_DATABASE[d];
+        const hasMd = !!ANALYSES_DATABASE[d];
+
+        let extraIcon = "";
+        if (hasReport && hasMd) extraIcon = " • 📝";
+        else if (hasMd) extraIcon = " 📝";
+
         btn.className = `px-3 py-1 rounded-lg transition ${{isActive ? 'bg-sky-500 text-white shadow-sm font-semibold' : 'text-slate-400 hover:text-slate-200'}}`;
-        btn.textContent = d;
+        btn.textContent = `${{d}}${{extraIcon}}`;
         btn.onclick = () => {{
           currentDate = d;
           renderAll();
@@ -396,21 +561,73 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       }});
     }}
 
-    function renderAll() {{
-      const rep = REPORTS_DATABASE[currentDate];
-      if (!rep) return;
+    function updateViewModeVisibility() {{
+      const jSec = document.getElementById("journal-section");
+      const splitSec = document.getElementById("analytics-split-section");
+      const ribbonSec = document.getElementById("analytics-ribbon-section");
+      const chartsSec = document.getElementById("analytics-charts-section");
+      const boardsSec = document.getElementById("analytics-leaderboards-section");
+      const ledgerSec = document.getElementById("analytics-ledger-section");
 
+      if (activeMainTab === "journal") {{
+        jSec.classList.remove("hidden");
+        splitSec.classList.add("hidden");
+        ribbonSec.classList.add("hidden");
+        chartsSec.classList.add("hidden");
+        boardsSec.classList.add("hidden");
+        ledgerSec.classList.add("hidden");
+      }} else if (activeMainTab === "analytics") {{
+        jSec.classList.add("hidden");
+        splitSec.classList.remove("hidden");
+        ribbonSec.classList.remove("hidden");
+        chartsSec.classList.remove("hidden");
+        boardsSec.classList.remove("hidden");
+        ledgerSec.classList.remove("hidden");
+      }} else {{ // 'split'
+        jSec.classList.remove("hidden");
+        splitSec.classList.remove("hidden");
+        ribbonSec.classList.remove("hidden");
+        chartsSec.classList.remove("hidden");
+        boardsSec.classList.remove("hidden");
+        ledgerSec.classList.remove("hidden");
+      }}
+    }}
+
+    function renderAll() {{
+      const rep = REPORTS_DATABASE[currentDate] || {{}};
+      const mdContent = ANALYSES_DATABASE[currentDate] || "";
       const sum = rep.summary || {{}};
       const sources = rep.sources || {{}};
       
+      // Analysis status badge
+      const badge = document.getElementById("has-analysis-badge");
+      if (mdContent.trim()) {{
+        badge.classList.remove("hidden");
+      }} else {{
+        badge.classList.add("hidden");
+      }}
+
+      // Render Markdown Journal
+      const journalContainer = document.getElementById("journal-content-container");
+      journalContainer.innerHTML = renderMarkdown(mdContent);
+      document.getElementById("journal-date-tag").textContent = `Date: ${{currentDate}}`;
+      
+      const parts = currentDate.split("-");
+      const yr = parts[0] || "2026";
+      const mNames = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+      const mmm = (parts[1] && parseInt(parts[1]) > 0 && parseInt(parts[1]) <= 12) ? mNames[parseInt(parts[1]) - 1] : "sep";
+      document.getElementById("journal-filepath").textContent = `Record/analysis/${{yr}}/${{mmm}}/daily/${{currentDate}}.md`;
+
       // Top Metrics
       const totalSec = sum.total_active_seconds || 0;
-      document.getElementById("metric-total-active").textContent = formatSecs(totalSec);
+      document.getElementById("metric-total-active").textContent = totalSec > 0 ? formatSecs(totalSec) : "--";
       
       const spanSec = sum.observed_span_seconds || 0;
       const spanFormatted = formatSecs(spanSec);
       const pctActive = spanSec > 0 ? Math.round((totalSec / spanSec) * 100) : 0;
-      document.getElementById("metric-observed-span").innerHTML = `<span>Observed: <strong class="text-slate-200">${{spanFormatted}}</strong> (${{pctActive}}% active)</span>`;
+      document.getElementById("metric-observed-span").innerHTML = spanSec > 0 ? 
+        `<span>Observed: <strong class="text-slate-200">${{spanFormatted}}</strong> (${{pctActive}}% active)</span>` : 
+        `<span>No active session data</span>`;
 
       // Deep Work Estimate (ChatGPT, GitHub, LeetCode, Antigravity, VS Code)
       let workSec = (sources.vscode?.duration_seconds || 0);
@@ -430,7 +647,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
           }}
         }});
       }}
-      document.getElementById("metric-work-time").textContent = formatSecs(workSec);
+      document.getElementById("metric-work-time").textContent = workSec > 0 ? formatSecs(workSec) : "--";
       const workPct = totalSec > 0 ? Math.round((workSec / totalSec) * 100) : 0;
       document.getElementById("metric-work-pct").textContent = `${{workPct}}% of total active time`;
 
@@ -486,6 +703,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       renderMobileApps(rep.apps || []);
       renderDesktopApps(rep.desktop_apps || []);
       renderLedger(rep.timeline || []);
+      updateViewModeVisibility();
     }}
 
     function renderTimelineRibbon(timeline) {{
@@ -497,13 +715,12 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
         const start = new Date(item.start);
         const end = new Date(item.end);
         
-        // Seconds from midnight
         const startSec = start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds();
         const endSec = end.getHours() * 3600 + end.getMinutes() * 60 + end.getSeconds();
         
         const leftPct = (startSec / 86400) * 100;
         let widthPct = ((endSec - startSec) / 86400) * 100;
-        if (widthPct < 0.2) widthPct = 0.2; // minimum visible sliver
+        if (widthPct < 0.2) widthPct = 0.2;
 
         const block = document.createElement("div");
         block.className = "absolute top-2 bottom-2 rounded-sm cursor-pointer transition hover:opacity-100 hover:scale-y-125 hover:z-20";
@@ -541,13 +758,11 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       const container = document.getElementById("hourly-bars-container");
       container.innerHTML = "";
 
-      // Map 0 to 23
       const hourMap = {{}};
       for (let h = 0; h < 24; h++) {{
         hourMap[h] = {{ active_seconds: 0, browser: 0, mobile: 0, desktop: 0, vscode: 0 }};
       }}
 
-      let maxHourSec = 3600;
       hourly.forEach(entry => {{
         if (hourMap[entry.hour] !== undefined) {{
           hourMap[entry.hour] = {{
@@ -568,19 +783,15 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
         const total = item.active_seconds;
         const totalHeightPct = Math.min(100, (total / 3600) * 100);
 
-        // Stacked bar segments
         const bH = total > 0 ? (item.browser / total) * 100 : 0;
         const mH = total > 0 ? (item.mobile / total) * 100 : 0;
         const dH = total > 0 ? (item.desktop / total) * 100 : 0;
         const vH = total > 0 ? (item.vscode / total) * 100 : 0;
 
         col.innerHTML = `
-          <!-- Tooltip on hover -->
           <div class="opacity-0 group-hover:opacity-100 transition absolute -top-12 z-30 bg-slate-900 border border-slate-700 text-slate-200 text-[10px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
             ${{h}}:00 &bull; ${{formatSecs(total)}}
           </div>
-
-          <!-- Bar -->
           <div class="w-full bg-slate-900 rounded-t-sm flex flex-col-reverse overflow-hidden transition-all duration-300 group-hover:brightness-125" style="height: ${{Math.max(4, totalHeightPct)}}%">
             <div class="bg-sky-500 w-full" style="height: ${{bH}}%"></div>
             <div class="bg-purple-500 w-full" style="height: ${{mH}}%"></div>
@@ -728,7 +939,6 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
         return;
       }}
 
-      // Display in reverse chronological order
       filtered.slice().reverse().forEach(item => {{
         const row = document.createElement("div");
         row.className = "p-3 sm:px-4 hover:bg-slate-900/60 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs";
@@ -760,6 +970,18 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       }});
     }}
 
+    // Tab buttons handlers
+    document.querySelectorAll(".tab-btn").forEach(btn => {{
+      btn.onclick = () => {{
+        document.querySelectorAll(".tab-btn").forEach(b => {{
+          b.className = "tab-btn px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5";
+        }});
+        btn.className = "tab-btn px-3 py-1.5 rounded-lg bg-sky-500 text-white font-medium transition flex items-center gap-1.5";
+        activeMainTab = btn.getAttribute("data-tab");
+        updateViewModeVisibility();
+      }};
+    }});
+
     // Filter tabs handlers
     document.querySelectorAll(".filter-btn").forEach(btn => {{
       btn.onclick = () => {{
@@ -778,21 +1000,30 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
       renderLedger(REPORTS_DATABASE[currentDate]?.timeline || []);
     }};
 
-    // Custom JSON file loader
+    // Custom file loader (.json or .md)
     document.getElementById("file-input").onchange = (e) => {{
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = (evt) => {{
-        try {{
-          const parsed = JSON.parse(evt.target.result);
-          const d = parsed.date || file.name.replace(".json", "");
-          REPORTS_DATABASE[d] = parsed;
+        const text = evt.target.result;
+        if (file.name.endsWith(".json")) {{
+          try {{
+            const parsed = JSON.parse(text);
+            const d = parsed.date || file.name.replace(".json", "");
+            REPORTS_DATABASE[d] = parsed;
+            currentDate = d;
+            initDateButtons();
+            renderAll();
+          }} catch(err) {{
+            alert("Could not parse JSON report file: " + err.message);
+          }}
+        }} else if (file.name.endsWith(".md")) {{
+          const d = file.name.replace(".md", "");
+          ANALYSES_DATABASE[d] = text;
           currentDate = d;
           initDateButtons();
           renderAll();
-        }} catch(err) {{
-          alert("Could not parse JSON report file: " + err.message);
         }}
       }};
       reader.readAsText(file);
@@ -808,36 +1039,67 @@ def build_dashboard_html(reports_data: Dict[str, Any], initial_date: str) -> str
     return html
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate interactive HTML dashboard from reports")
-    parser.add_argument("--reports-dir", type=str, default="Record/reports", help="Directory containing report JSON files")
+    parser = argparse.ArgumentParser(description="Generate interactive HTML dashboard from reports and analyses")
+    parser.add_argument("--data-dir", type=str, default="Record", help="Root data directory containing report/ and analysis/")
     parser.add_argument("--output", type=str, default="Record/reports/dashboard.html", help="Output HTML file path")
     args = parser.parse_args()
 
-    reports_dir = Path(args.reports_dir)
-    if not reports_dir.is_absolute():
-        reports_dir = Path(__file__).resolve().parent.parent.parent / args.reports_dir
+    data_dir = Path(args.data_dir)
+    if not data_dir.is_absolute():
+        data_dir = Path(__file__).resolve().parent.parent.parent / args.data_dir
 
-    if not reports_dir.exists():
-        print(f"Reports directory not found: {reports_dir}", file=sys.stderr)
+    if not data_dir.exists():
+        print(f"Data directory not found: {data_dir}", file=sys.stderr)
         sys.exit(1)
 
-    json_files = sorted(reports_dir.glob("*.json"))
-    if not json_files:
-        print(f"No JSON report files found in {reports_dir}", file=sys.stderr)
-        sys.exit(1)
-
+    # 1. Scan JSON reports from both Record/report/**/daily/*.json and Record/reports/*.json
     reports_data = {}
-    for f in json_files:
+    report_candidates = []
+    
+    hierarchical_reports = list(data_dir.glob("report/**/daily/*.json"))
+    report_candidates.extend(hierarchical_reports)
+    
+    legacy_reports = list(data_dir.glob("reports/*.json"))
+    report_candidates.extend(legacy_reports)
+
+    for f in sorted(report_candidates):
+        if f.name == "dashboard.html":
+            continue
         try:
             with open(f, "r", encoding="utf-8") as fp:
                 data = json.load(fp)
                 date_key = data.get("date", f.stem)
                 reports_data[date_key] = data
         except Exception as e:
-            print(f"Warning: Failed to load {f.name}: {e}", file=sys.stderr)
+            print(f"Warning: Failed to load report {f.name}: {e}", file=sys.stderr)
 
-    latest_date = sorted(reports_data.keys())[-1]
-    dashboard_html = build_dashboard_html(reports_data, latest_date)
+    # 2. Scan Markdown analyses from Record/analysis/**/daily/*.md and Record/analysis/*.md
+    analyses_data = {}
+    analysis_candidates = []
+    
+    hierarchical_analyses = list(data_dir.glob("analysis/**/daily/*.md"))
+    analysis_candidates.extend(hierarchical_analyses)
+    
+    flat_analyses = list(data_dir.glob("analysis/*.md"))
+    analysis_candidates.extend(flat_analyses)
+
+    for f in sorted(analysis_candidates):
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                content = fp.read()
+                # Use filename stem as date (YYYY-MM-DD)
+                date_key = f.stem
+                analyses_data[date_key] = content
+        except Exception as e:
+            print(f"Warning: Failed to load analysis {f.name}: {e}", file=sys.stderr)
+
+    all_dates = sorted(set(list(reports_data.keys()) + list(analyses_data.keys())))
+    if not all_dates:
+        print("No reports or analysis files found.", file=sys.stderr)
+        sys.exit(1)
+
+    latest_date = all_dates[-1]
+    dashboard_html = build_dashboard_html(reports_data, analyses_data, latest_date)
 
     out_path = Path(args.output)
     if not out_path.is_absolute():
@@ -847,8 +1109,16 @@ def main():
     with open(out_path, "w", encoding="utf-8") as fp:
         fp.write(dashboard_html)
 
+    # Also mirror into Record/report/dashboard.html
+    mirror_path = data_dir / "report" / "dashboard.html"
+    mirror_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(mirror_path, "w", encoding="utf-8") as fp:
+        fp.write(dashboard_html)
+
     print(f"Dashboard successfully generated at: {out_path}")
-    print(f"Loaded {len(reports_data)} days: {', '.join(reports_data.keys())}")
+    print(f"Mirrored to: {mirror_path}")
+    print(f"Loaded {len(reports_data)} JSON reports: {', '.join(reports_data.keys())}")
+    print(f"Loaded {len(analyses_data)} Markdown analyses: {', '.join(analyses_data.keys())}")
 
 if __name__ == "__main__":
     main()

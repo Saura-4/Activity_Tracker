@@ -711,16 +711,34 @@ def generate_range_report(
 
 
 def write_report(config, report: Dict[str, Any], filename: str) -> str:
-    """Safely overwrite reports/filename with the fresh JSON report."""
-    reports_dir = Path(config.data_directory) / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
+    """Safely write JSON report to structured Record/report/YYYY/mmm/daily/ directory
+    and mirror to Record/reports/ for backward compatibility.
+    """
+    target_date_str = report.get("date")
+    hierarchical_path = None
 
-    output_path = reports_dir / filename
-    with open(output_path, "w", encoding="utf-8") as f:
+    if target_date_str:
+        try:
+            d = date.fromisoformat(target_date_str)
+            year = str(d.year)
+            month = d.strftime("%b").lower()  # e.g. 'sep'
+            structured_dir = Path(config.data_directory) / "report" / year / month / "daily"
+            structured_dir.mkdir(parents=True, exist_ok=True)
+            hierarchical_path = structured_dir / filename
+            with open(hierarchical_path, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+            print(f"\nReport written to: {hierarchical_path}")
+        except ValueError:
+            pass
+
+    # Backward compatibility mirror
+    legacy_dir = Path(config.data_directory) / "reports"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    legacy_path = legacy_dir / filename
+    with open(legacy_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False, default=str)
 
-    print(f"\nReport written to: {output_path}")
-    return str(output_path)
+    return str(hierarchical_path if hierarchical_path else legacy_path)
 
 
 def print_summary(report: Dict[str, Any]):
