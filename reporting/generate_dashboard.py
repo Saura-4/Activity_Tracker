@@ -42,11 +42,12 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
   <style>
     :root {{
       --background: #090d16;
-      --card: #111726;
-      --card-hover: #172033;
-      --border: #1e293b;
-      --foreground: #f8fafc;
-      --muted-foreground: #94a3b8;
+      --card: #0d1117;
+      --card-hover: #161b22;
+      --border: #21262d;
+      --border-subtle: #1b2128;
+      --foreground: #f0f6fc;
+      --muted-foreground: #8b949e;
       --primary: #38bdf8;
       --primary-foreground: #0284c7;
     }}
@@ -64,90 +65,64 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       border-radius: 4px;
     }}
     .custom-scroll::-webkit-scrollbar-thumb {{
-      background: #334155;
+      background: #21262d;
       border-radius: 4px;
     }}
   </style>
 </head>
-<body class="antialiased p-4 sm:p-6 lg:p-8 selection:bg-sky-500/30 selection:text-sky-200">
-  <div class="max-w-7xl mx-auto space-y-6">
+<body class="antialiased p-4 sm:p-6 lg:p-8 selection:bg-sky-500/20 selection:text-sky-300">
+  <div class="max-w-7xl mx-auto space-y-5">
 
     <!-- Top Navigation & Controls Bar -->
-    <header class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center shadow-md shadow-sky-500/20 text-white font-bold text-lg">
-          ⏱️
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-xl px-4 py-3 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5">
+        <div class="w-7 h-7 rounded-md bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
         </div>
-        <div>
-          <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-[var(--foreground)] flex items-center gap-2">
-            Activity Intelligence Dashboard
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              ● 100% Coverage
-            </span>
-          </h1>
-          <p class="text-xs sm:text-sm text-[var(--muted-foreground)]">Unified Digital Footprint: Browser &bull; VS Code &bull; Windows Desktop &bull; Android Mobile</p>
-        </div>
+        <h1 class="text-base font-semibold tracking-tight text-[var(--foreground)]">Activity Tracker</h1>
       </div>
 
-      <div class="flex flex-wrap items-center gap-3">
+      <div class="flex flex-wrap items-center gap-2">
         <!-- Date Switcher Buttons -->
-        <div id="date-buttons-container" class="inline-flex p-1 bg-slate-900/80 rounded-xl border border-[var(--border)] text-xs font-medium">
+        <div id="date-buttons-container" class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs">
           <!-- Populated by JS -->
         </div>
 
         <!-- Custom JSON loader -->
-        <label class="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-          Load Report (.json/.md)
+        <label class="cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition">
+          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+          Import
           <input type="file" id="file-input" accept=".json,.md" class="hidden">
         </label>
       </div>
     </header>
 
     <!-- View Mode Selector Tabs -->
-    <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
-      <div class="inline-flex p-1 bg-slate-900 rounded-xl border border-slate-800 text-xs font-medium" id="main-view-tabs">
-        <button data-tab="split" class="tab-btn px-3 py-1.5 rounded-lg bg-sky-500 text-white font-medium transition flex items-center gap-1.5">
-          <span>📊</span> Split Dashboard & Journal
-        </button>
-        <button data-tab="analytics" class="tab-btn px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
-          <span>📈</span> Full Analytics & Charts
-        </button>
-        <button data-tab="journal" class="tab-btn px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5">
-          <span>📝</span> Executive Journal (.md)
-        </button>
+    <div class="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
+      <div class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs font-medium" id="main-view-tabs">
+        <button data-tab="split" class="tab-btn px-3 py-1 rounded-md bg-[#21262d] text-white transition">Dashboard & Journal</button>
+        <button data-tab="analytics" class="tab-btn px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 transition">Analytics</button>
+        <button data-tab="journal" class="tab-btn px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 transition">Journal</button>
       </div>
 
-      <div id="has-analysis-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
-        <span>✓</span> Daily Audit Markdown Attached
+      <div id="has-analysis-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-400">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Analysis note attached
       </div>
     </div>
 
     <!-- Annual Activity Contribution Heatmap (GitHub/LeetCode block style) -->
-    <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm space-y-3">
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-slate-800/80">
-        <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-sm">
-            🟩
-          </div>
-          <div>
-            <h2 class="text-sm sm:text-base font-bold text-[var(--foreground)] flex items-center gap-2">
-              Annual Consistency & Activity Heatmap
-              <span id="calendar-summary-badge" class="text-xs font-mono font-medium px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                -- active days
-              </span>
-            </h2>
-            <p class="text-xs text-[var(--muted-foreground)]">Click any day block to inspect its complete timeline, app metrics, and executive audit</p>
-          </div>
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-2.5">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[var(--border)]">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-[var(--foreground)]">Activity Calendar</h2>
+          <span id="calendar-summary-badge" class="text-xs font-mono text-slate-400"></span>
         </div>
 
-        <div class="flex flex-wrap items-center gap-3">
-          <div id="calendar-hover-info" class="text-xs font-mono text-slate-300 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
-            Selected: --
-          </div>
+        <div class="flex items-center gap-3">
+          <div id="calendar-hover-info" class="text-xs font-mono text-slate-400">Selected: --</div>
 
           <!-- Color Scale Legend -->
-          <div class="flex items-center gap-1.5 text-[11px] text-slate-400 bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
+          <div class="flex items-center gap-1 text-[10px] text-slate-400">
             <span>Less</span>
             <span class="w-2.5 h-2.5 rounded-[2px] bg-[#161b22] border border-[#272d37]" title="No activity"></span>
             <span class="w-2.5 h-2.5 rounded-[2px] bg-[#0e4429] border border-[#14532d]" title="< 2h"></span>
@@ -190,131 +165,113 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     </section>
 
     <!-- KPI Metric Cards Grid -->
-    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-sky-500/40 transition">
-        <div class="absolute -right-3 -top-3 w-16 h-16 bg-sky-500/10 rounded-full blur-xl group-hover:bg-sky-500/20 transition"></div>
-        <div class="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Total Active Screen Time</div>
-        <div id="metric-total-active" class="text-3xl font-extrabold text-[var(--foreground)] mt-2">--</div>
-        <div id="metric-observed-span" class="text-xs text-[var(--muted-foreground)] mt-1.5 flex items-center gap-1">
-          <span>Observed span:</span>
-          <span class="font-medium text-slate-300">--</span>
-        </div>
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-[#388bfd]/50">
+        <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Active Screen Time</div>
+        <div id="metric-total-active" class="text-2xl font-bold text-[var(--foreground)] mt-1.5 font-mono">--</div>
+        <div id="metric-observed-span" class="text-xs text-[var(--muted-foreground)] mt-1">Observed span: --</div>
       </div>
 
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-indigo-500/40 transition">
-        <div class="absolute -right-3 -top-3 w-16 h-16 bg-indigo-500/10 rounded-full blur-xl group-hover:bg-indigo-500/20 transition"></div>
-        <div class="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Deep Focus / Engineering</div>
-        <div id="metric-work-time" class="text-3xl font-extrabold text-indigo-400 mt-2">--</div>
-        <div id="metric-work-pct" class="text-xs text-[var(--muted-foreground)] mt-1.5">Coding, AI Research, Problem Solving</div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-indigo-500/50">
+        <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Deep Focus Time</div>
+        <div id="metric-work-time" class="text-2xl font-bold text-indigo-400 mt-1.5 font-mono">--</div>
+        <div id="metric-work-pct" class="text-xs text-[var(--muted-foreground)] mt-1">Coding & AI research</div>
       </div>
 
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-amber-500/40 transition">
-        <div class="absolute -right-3 -top-3 w-16 h-16 bg-amber-500/10 rounded-full blur-xl group-hover:bg-amber-500/20 transition"></div>
-        <div class="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Context Transitions</div>
-        <div id="metric-switches" class="text-3xl font-extrabold text-amber-400 mt-2">--</div>
-        <div id="metric-switch-rate" class="text-xs text-[var(--muted-foreground)] mt-1.5">Switches across apps & tabs</div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-amber-500/50">
+        <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Context Switches</div>
+        <div id="metric-switches" class="text-2xl font-bold text-amber-400 mt-1.5 font-mono">--</div>
+        <div id="metric-switch-rate" class="text-xs text-[var(--muted-foreground)] mt-1">Across apps & windows</div>
       </div>
 
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-emerald-500/40 transition">
-        <div class="absolute -right-3 -top-3 w-16 h-16 bg-emerald-500/10 rounded-full blur-xl group-hover:bg-emerald-500/20 transition"></div>
-        <div class="text-xs font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">Longest Single Focus Block</div>
-        <div id="metric-longest-session" class="text-3xl font-extrabold text-emerald-400 mt-2">--</div>
-        <div id="metric-longest-name" class="text-xs text-[var(--muted-foreground)] mt-1.5 truncate">--</div>
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-emerald-500/50">
+        <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Longest Focus Block</div>
+        <div id="metric-longest-session" class="text-2xl font-bold text-emerald-400 mt-1.5 font-mono">--</div>
+        <div id="metric-longest-name" class="text-xs text-[var(--muted-foreground)] mt-1 truncate">--</div>
       </div>
     </section>
 
-    <!-- Executive Journal (.md) Section (Rendered when in 'split' or 'journal' mode) -->
-    <section id="journal-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800/80 gap-2">
+    <!-- Daily Journal (.md) Section -->
+    <section id="journal-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-2.5 border-b border-[var(--border)] gap-2">
         <div class="flex items-center gap-2">
-          <div class="w-7 h-7 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 font-bold text-sm">
-            📝
-          </div>
-          <div>
-            <h2 class="text-base font-bold text-[var(--foreground)]" id="journal-heading">Executive Behavioral Audit & Journal</h2>
-            <p class="text-xs text-[var(--muted-foreground)]" id="journal-filepath">Loaded from Record/analysis/YYYY/mmm/daily/{initial_date}.md</p>
-          </div>
+          <h2 class="text-sm font-semibold text-[var(--foreground)]" id="journal-heading">Daily Journal</h2>
+          <span class="text-xs text-slate-500 font-mono" id="journal-filepath">Record/analysis/...</span>
         </div>
         <div class="text-xs text-slate-400 font-mono" id="journal-date-tag">Date: --</div>
       </div>
 
       <!-- Rendered Markdown Body -->
-      <div id="journal-content-container" class="prose prose-invert max-w-none text-slate-200">
+      <div id="journal-content-container" class="prose prose-invert max-w-none text-slate-300 text-xs leading-relaxed">
         <!-- Rendered markdown goes here -->
       </div>
     </section>
 
     <!-- Source Split & Device Distribution -->
-    <section id="analytics-split-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <h2 class="text-base font-bold text-[var(--foreground)]">Device & Channel Allocation</h2>
-          <p class="text-xs text-[var(--muted-foreground)]">Breakdown of attention between PC web, editors, native OS apps, and mobile device</p>
-        </div>
-        <div id="device-ratio-badge" class="text-xs font-mono px-3 py-1 bg-slate-800/80 rounded-lg text-slate-300 border border-slate-700/60 self-start">
+    <section id="analytics-split-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-[var(--foreground)]">Device Breakdown</h2>
+        <div id="device-ratio-badge" class="text-xs font-mono px-2 py-0.5 bg-[#090d16] rounded text-slate-400 border border-[var(--border)]">
           Ratio: --
         </div>
       </div>
 
       <!-- Segmented Bar -->
-      <div id="source-split-bar" class="w-full h-4 rounded-full overflow-hidden flex bg-slate-900 border border-slate-800 shadow-inner">
+      <div id="source-split-bar" class="w-full h-3 rounded-full overflow-hidden flex bg-[#090d16] border border-[var(--border)]">
         <!-- Dynamic segments -->
       </div>
 
       <!-- Source Badges Legend -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 text-xs">
-        <div class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/50 border border-slate-800">
-          <span class="w-3.5 h-3.5 rounded-lg bg-sky-500 shrink-0"></span>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1 text-xs">
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+          <span class="w-2.5 h-2.5 rounded-sm bg-sky-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-semibold text-sky-400">PC Browser</div>
-            <div id="source-stat-browser" class="text-slate-400 font-mono text-[11px]">--</div>
+            <div class="font-medium text-slate-300 text-xs">Browser</div>
+            <div id="source-stat-browser" class="text-slate-500 font-mono text-[11px]">--</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/50 border border-slate-800">
-          <span class="w-3.5 h-3.5 rounded-lg bg-purple-500 shrink-0"></span>
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+          <span class="w-2.5 h-2.5 rounded-sm bg-purple-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-semibold text-purple-400">Android Mobile</div>
-            <div id="source-stat-mobile" class="text-slate-400 font-mono text-[11px]">--</div>
+            <div class="font-medium text-slate-300 text-xs">Mobile</div>
+            <div id="source-stat-mobile" class="text-slate-500 font-mono text-[11px]">--</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/50 border border-slate-800">
-          <span class="w-3.5 h-3.5 rounded-lg bg-emerald-500 shrink-0"></span>
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+          <span class="w-2.5 h-2.5 rounded-sm bg-emerald-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-semibold text-emerald-400">Desktop Apps</div>
-            <div id="source-stat-desktop" class="text-slate-400 font-mono text-[11px]">--</div>
+            <div class="font-medium text-slate-300 text-xs">Desktop</div>
+            <div id="source-stat-desktop" class="text-slate-500 font-mono text-[11px]">--</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/50 border border-slate-800">
-          <span class="w-3.5 h-3.5 rounded-lg bg-amber-500 shrink-0"></span>
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+          <span class="w-2.5 h-2.5 rounded-sm bg-amber-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-semibold text-amber-400">VS Code Editor</div>
-            <div id="source-stat-vscode" class="text-slate-400 font-mono text-[11px]">--</div>
+            <div class="font-medium text-slate-300 text-xs">VS Code</div>
+            <div id="source-stat-vscode" class="text-slate-500 font-mono text-[11px]">--</div>
           </div>
         </div>
       </div>
     </section>
 
     <!-- 24-Hour Gantt Timeline Strip -->
-    <section id="analytics-ribbon-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-        <div>
-          <h2 class="text-base font-bold text-[var(--foreground)]">24-Hour Chronological Activity Ribbon</h2>
-          <p class="text-xs text-[var(--muted-foreground)]">Hover over any block to reveal exact session duration, domain/app, and timestamp</p>
-        </div>
-        <div class="text-xs text-slate-400 flex items-center gap-3">
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-500"></span> Browser</span>
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-purple-500"></span> Mobile</span>
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-500"></span> Desktop</span>
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-500"></span> VS Code</span>
+    <section id="analytics-ribbon-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-[var(--foreground)]">Timeline Ribbon</h2>
+        <div class="text-[11px] text-slate-400 flex items-center gap-3">
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Browser</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-purple-400"></span> Mobile</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Desktop</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span> VS Code</span>
         </div>
       </div>
 
       <!-- Timeline Container -->
-      <div class="space-y-1.5">
-        <div class="relative w-full h-14 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden" id="timeline-strip-container">
+      <div class="space-y-1">
+        <div class="relative w-full h-10 bg-[#090d16] rounded-lg border border-[var(--border)] overflow-hidden" id="timeline-strip-container">
           <!-- Session blocks injected here -->
         </div>
 
@@ -333,12 +290,12 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </div>
 
       <!-- Hover detail card -->
-      <div id="timeline-hover-card" class="p-3 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs flex flex-wrap items-center justify-between gap-2">
+      <div id="timeline-hover-card" class="p-2.5 bg-[#090d16] border border-[var(--border)] rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2">
-          <span id="hover-source-pill" class="px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-slate-800 text-slate-300">Hover Block</span>
-          <span id="hover-title" class="font-medium text-slate-200">Move mouse over the ribbon above to inspect sessions</span>
+          <span id="hover-source-pill" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium uppercase bg-[#161b22] text-slate-400 border border-[#30363d]">Details</span>
+          <span id="hover-title" class="text-slate-300">Hover blocks above to inspect session</span>
         </div>
-        <div id="hover-time" class="font-mono text-slate-400">--:-- &ndash; --:--</div>
+        <div id="hover-time" class="font-mono text-slate-500 text-[11px]">--:-- &ndash; --:--</div>
       </div>
     </section>
 
@@ -366,13 +323,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </div>
 
       <!-- Top Longest Focused Sessions -->
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
-        <div>
-          <h2 class="text-base font-bold text-[var(--foreground)]">Deepest Focus Stretches</h2>
-          <p class="text-xs text-[var(--muted-foreground)]">Longest uninterrupted single sessions</p>
-        </div>
-
-        <div id="longest-sessions-list" class="space-y-2.5">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
+        <h2 class="text-sm font-semibold text-[var(--foreground)]">Longest Sessions</h2>
+        <div id="longest-sessions-list" class="space-y-2">
           <!-- Populated by JS -->
         </div>
       </div>
@@ -380,43 +333,37 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     </section>
 
     <!-- Detailed Leaderboards Grid (Domains, Mobile Apps, Desktop Apps) -->
-    <section id="analytics-leaderboards-section" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <section id="analytics-leaderboards-section" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       
       <!-- Domains Card -->
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4 flex flex-col">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
-          <h2 class="text-base font-bold text-[var(--foreground)] flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-sky-500"></span> Top Websites
-          </h2>
-          <span id="domains-count-badge" class="text-xs font-mono text-slate-400">0 domains</span>
+          <h2 class="text-sm font-semibold text-[var(--foreground)]">Websites</h2>
+          <span id="domains-count-badge" class="text-xs font-mono text-slate-500">0 domains</span>
         </div>
-        <div id="domains-list" class="space-y-3 flex-1 overflow-y-auto max-h-96 pr-1 custom-scroll">
+        <div id="domains-list" class="space-y-2.5 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
         </div>
       </div>
 
       <!-- Mobile Apps Card -->
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4 flex flex-col">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
-          <h2 class="text-base font-bold text-[var(--foreground)] flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-purple-500"></span> Mobile Screen Time
-          </h2>
-          <span id="mobile-count-badge" class="text-xs font-mono text-slate-400">0 apps</span>
+          <h2 class="text-sm font-semibold text-[var(--foreground)]">Mobile Apps</h2>
+          <span id="mobile-count-badge" class="text-xs font-mono text-slate-500">0 apps</span>
         </div>
-        <div id="mobile-apps-list" class="space-y-3 flex-1 overflow-y-auto max-h-96 pr-1 custom-scroll">
+        <div id="mobile-apps-list" class="space-y-2.5 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
         </div>
       </div>
 
       <!-- Desktop Applications Card -->
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4 flex flex-col md:col-span-2 lg:col-span-1">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col md:col-span-2 lg:col-span-1">
         <div class="flex items-center justify-between">
-          <h2 class="text-base font-bold text-[var(--foreground)] flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Desktop Apps
-          </h2>
-          <span id="desktop-count-badge" class="text-xs font-mono text-slate-400">0 apps</span>
+          <h2 class="text-sm font-semibold text-[var(--foreground)]">Desktop Apps</h2>
+          <span id="desktop-count-badge" class="text-xs font-mono text-slate-500">0 apps</span>
         </div>
-        <div id="desktop-apps-list" class="space-y-3 flex-1 overflow-y-auto max-h-96 pr-1 custom-scroll">
+        <div id="desktop-apps-list" class="space-y-2.5 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
         </div>
       </div>
@@ -424,32 +371,29 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     </section>
 
     <!-- Comprehensive Filterable Timeline Table -->
-    <section id="analytics-ledger-section" class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 class="text-base font-bold text-[var(--foreground)]">Chronological Activity Ledger</h2>
-          <p class="text-xs text-[var(--muted-foreground)]">Complete event-by-event history with duration and context</p>
-        </div>
+    <section id="analytics-ledger-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h2 class="text-sm font-semibold text-[var(--foreground)]">Session Ledger</h2>
 
         <!-- Filter tabs & Search -->
-        <div class="flex flex-wrap items-center gap-2.5">
-          <div id="timeline-filters" class="inline-flex p-1 bg-slate-900 rounded-xl border border-slate-800 text-xs font-medium">
-            <button data-filter="all" class="filter-btn px-2.5 py-1 rounded-lg bg-sky-500 text-white transition">All</button>
-            <button data-filter="browser" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 hover:text-slate-200 transition">Browser</button>
-            <button data-filter="mobile" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 hover:text-slate-200 transition">Mobile</button>
-            <button data-filter="desktop" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 hover:text-slate-200 transition">Desktop</button>
-            <button data-filter="vscode" class="filter-btn px-2.5 py-1 rounded-lg text-slate-400 hover:text-slate-200 transition">VS Code</button>
+        <div class="flex flex-wrap items-center gap-2">
+          <div id="timeline-filters" class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs font-medium">
+            <button data-filter="all" class="filter-btn px-2.5 py-1 rounded-md bg-[#21262d] text-white transition text-xs">All</button>
+            <button data-filter="browser" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">Browser</button>
+            <button data-filter="mobile" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">Mobile</button>
+            <button data-filter="desktop" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">Desktop</button>
+            <button data-filter="vscode" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">VS Code</button>
           </div>
 
           <div class="relative">
-            <input type="text" id="timeline-search" placeholder="Search sessions..." class="bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500 w-44 sm:w-56">
+            <input type="text" id="timeline-search" placeholder="Filter..." class="bg-[#090d16] border border-[var(--border)] rounded-lg px-2.5 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500/50 w-36 sm:w-48 font-mono">
           </div>
         </div>
       </div>
 
       <!-- Ledger Container -->
-      <div class="overflow-hidden border border-slate-800/80 rounded-xl bg-slate-950/60">
-        <div class="max-h-[460px] overflow-y-auto custom-scroll divide-y divide-slate-800/60" id="timeline-table-body">
+      <div class="overflow-hidden border border-[var(--border)] rounded-lg bg-[#090d16]/70">
+        <div class="max-h-[460px] overflow-y-auto custom-scroll divide-y divide-[#21262d]" id="timeline-table-body">
           <!-- Session rows injected by JS -->
         </div>
       </div>
@@ -511,14 +455,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const mNames = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
         const mmm = (parts[1] && parseInt(parts[1]) > 0 && parseInt(parts[1]) <= 12) ? mNames[parseInt(parts[1]) - 1] : "sep";
         return `
-          <div class="p-8 text-center bg-slate-900/40 border border-dashed border-slate-800 rounded-xl space-y-3">
-            <div class="text-3xl">📝</div>
-            <div class="text-sm font-semibold text-slate-300">No Analysis Journal Recorded for ${{currentDate}}</div>
-            <p class="text-xs text-slate-500 max-w-md mx-auto">
-              You can add your executive daily audit by placing a markdown file at:<br>
-              <code class="text-sky-400 bg-slate-950 px-2 py-1 rounded mt-2 inline-block border border-slate-800">
-                Record/analysis/${{yr}}/${{mmm}}/daily/${{currentDate}}.md
-              </code>
+          <div class="py-8 text-center bg-[#090d16]/40 border border-dashed border-[#21262d] rounded-lg space-y-1.5">
+            <div class="text-xs font-medium text-slate-400">No journal entry for ${{currentDate}}</div>
+            <p class="text-[11px] text-slate-600 font-mono">
+              Record/analysis/${{yr}}/${{mmm}}/daily/${{currentDate}}.md
             </p>
           </div>
         `;
@@ -697,17 +637,17 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
           const friendlyDay = `${{dayNames[cur.getUTCDay()]}}, ${{mNames[cur.getUTCMonth()]}} ${{cur.getUTCDate()}}, ${{cur.getUTCFullYear()}}`;
           const activeText = secs > 0 ? `${{formatSecs(secs)}} active (${{sessionCount}} sessions)` : "No active sessions";
-          const mdText = hasMd ? " • 📝 Journal note" : "";
+          const mdText = hasMd ? " • note" : "";
           block.title = `${{friendlyDay}}: ${{activeText}}${{mdText}}`;
 
           block.onmouseenter = () => {{
             const infoBox = document.getElementById("calendar-hover-info");
             if (infoBox) {{
               infoBox.innerHTML = `
-                <span class="text-sky-400 font-semibold">${{friendlyDay}}</span> &bull; 
-                <span class="${{secs > 0 ? 'text-emerald-400 font-bold' : 'text-slate-400'}}">${{secs > 0 ? formatSecs(secs) : 'No activity'}}</span>
-                ${{sessionCount > 0 ? `<span class="text-slate-400"> (${{sessionCount}} sessions)</span>` : ''}}
-                ${{hasMd ? `<span class="text-amber-400"> • 📝 Journal</span>` : ''}}
+                <span class="text-slate-200 font-medium">${{friendlyDay}}</span> &bull; 
+                <span class="${{secs > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-500'}}">${{secs > 0 ? formatSecs(secs) : 'No activity'}}</span>
+                ${{sessionCount > 0 ? `<span class="text-slate-500"> (${{sessionCount}} sessions)</span>` : ''}}
+                ${{hasMd ? `<span class="text-sky-400 font-mono text-[10px]"> • note</span>` : ''}}
               `;
             }}
           }};
@@ -748,10 +688,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const infoBox = document.getElementById("calendar-hover-info");
       if (infoBox) {{
         infoBox.innerHTML = `
-          <span class="text-slate-400">Selected:</span> 
-          <strong class="text-white">${{friendlyDate}}</strong> &bull; 
-          <span class="${{secs > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-400'}}">${{secs > 0 ? formatSecs(secs) : 'No activity recorded'}}</span>
-          ${{hasMd ? `<span class="text-amber-400"> • 📝 Journal</span>` : ''}}
+          <span class="text-slate-500">Selected:</span> 
+          <strong class="text-slate-200">${{friendlyDate}}</strong> &bull; 
+          <span class="${{secs > 0 ? 'text-emerald-400 font-medium' : 'text-slate-500'}}">${{secs > 0 ? formatSecs(secs) : 'No activity recorded'}}</span>
+          ${{hasMd ? `<span class="text-sky-400 font-mono text-[10px]"> • note</span>` : ''}}
         `;
       }}
     }}
@@ -769,12 +709,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const hasReport = !!REPORTS_DATABASE[d];
         const hasMd = !!ANALYSES_DATABASE[d];
 
-        let extraIcon = "";
-        if (hasReport && hasMd) extraIcon = " • 📝";
-        else if (hasMd) extraIcon = " 📝";
+        let extraDot = hasMd ? ' <span class="inline-block w-1.5 h-1.5 rounded-full bg-sky-400 mb-0.5"></span>' : '';
 
-        btn.className = `px-3 py-1 rounded-lg transition ${{isActive ? 'bg-sky-500 text-white shadow-sm font-semibold' : 'text-slate-400 hover:text-slate-200'}}`;
-        btn.textContent = `${{d}}${{extraIcon}}`;
+        btn.className = `px-2.5 py-1 rounded-md transition text-xs font-mono ${{isActive ? 'bg-[#21262d] text-white font-medium border border-[#30363d]' : 'text-slate-400 hover:text-slate-200'}}`;
+        btn.innerHTML = `${{d}}${{extraDot}}`;
         btn.onclick = () => {{
           currentDate = d;
           renderAll();
