@@ -89,8 +89,13 @@ async def handle_sync_mobile(request):
         target_date = data.get("date")
         
         import asyncio
+        import importlib
         from datetime import datetime
         from collector.android_collector import sync_mobile_activity
+        import reporting.generate_report
+        import reporting.generate_dashboard
+        importlib.reload(reporting.generate_report)
+        importlib.reload(reporting.generate_dashboard)
         from reporting.generate_report import generate_single_day_report, write_report
         from reporting.generate_dashboard import generate_dashboard_files
 
@@ -127,7 +132,12 @@ async def handle_generate_report(request):
             except Exception:
                 pass
         import asyncio
+        import importlib
         from datetime import datetime
+        import reporting.generate_report
+        import reporting.generate_dashboard
+        importlib.reload(reporting.generate_report)
+        importlib.reload(reporting.generate_dashboard)
         from reporting.generate_report import generate_single_day_report, write_report
         from reporting.generate_dashboard import generate_dashboard_files
 
