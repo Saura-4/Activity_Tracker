@@ -886,4 +886,50 @@ class TestDesktopSessionization:
         assert report["desktop_apps"][0]["duration_seconds"] == 2700.0
 
 
+# =============================================================================
+# Cross-Device Overlap and Interleaving Tests
+# =============================================================================
+class TestCrossDeviceOverlapAndInterleaving:
+    def test_overlapping_mobile_and_pc_no_double_counting(self):
+        """User is working in VS Code from 10:00 to 11:00 (3600s),
+        while simultaneously checking WhatsApp on mobile from 10:15 to 10:45 (1800s).
+        Expected:
+        - total_active_seconds = 3600.0 (true wall-clock union, NOT 5400s)
+        - vscode_seconds = 3600.0
+        - mobile_seconds = 1800.0
+        """
+        from tests.conftest import make_mobile_event
+        events = [
+            make_vscode_event(ts(10, 0, 0), ts(11, 0, 0), "activity-tracker", "main.py", "python"),
+            make_mobile_event(ts(10, 15, 0), ts(10, 45, 0), "WhatsApp", "com.whatsapp"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["total_active_seconds"] == 3600.0
+        assert report["summary"]["vscode_seconds"] == 3600.0
+        assert report["summary"]["mobile_seconds"] == 1800.0
+        assert report["summary"]["session_count"] == 2
+
+    def test_mobile_interleaving_does_not_fragment_pc_session(self):
+        """User works in VS Code from 10:00 to 10:20, checks phone 10:20:05 to 10:20:15,
+        and continues in the exact same VS Code file from 10:20:10 to 10:40.
+        VS Code events should merge into 1 continuous logical session rather than being
+        fragmented by the mobile event into separate sessions.
+        """
+        from tests.conftest import make_mobile_event
+        events = [
+            make_vscode_event(ts(10, 0, 0), ts(10, 20, 0), "activity-tracker", "main.py", "python"),
+            make_mobile_event(ts(10, 20, 5), ts(10, 20, 15), "Telegram", "org.telegram.messenger"),
+            make_vscode_event(ts(10, 20, 10), ts(10, 40, 0), "activity-tracker", "main.py", "python"),
+        ]
+
+        report = aggregate_events(events, merge_gap_seconds=30.0)
+
+        # VS Code events merged into 1 session; mobile is 1 session -> 2 sessions total
+        assert report["summary"]["session_count"] == 2
+        assert report["summary"]["vscode_seconds"] == 2390.0  # 1200s + 1190s (10s gap excluded)
+        assert report["summary"]["mobile_seconds"] == 10.0
+
+
 

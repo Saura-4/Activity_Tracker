@@ -214,6 +214,7 @@ class DesktopWatcher:
         self.running = False
         self.current_session = None  # {app, title, proc_name, start_time, start_dt, is_media}
         self.is_idle = False
+        self._last_tick_mono = None
 
     def start(self):
         """Start the desktop watching loop."""
@@ -265,6 +266,15 @@ class DesktopWatcher:
         self.current_session = None
 
     def _tick(self):
+        # OS Suspend / Sleep detection:
+        # If the gap between ticks exceeds 10s (poll_interval is 1s), the system was suspended/slept.
+        now_mono = time.monotonic()
+        if self._last_tick_mono is not None and (now_mono - self._last_tick_mono) > 10.0:
+            if self.current_session:
+                suspend_end_time = datetime.now().astimezone() - timedelta(seconds=(now_mono - self._last_tick_mono))
+                self._end_current_session(explicit_end_time=suspend_end_time)
+        self._last_tick_mono = now_mono
+
         idle_secs = get_idle_seconds()
         proc_name, app_name, title, is_fullscreen = get_foreground_window_info()
 

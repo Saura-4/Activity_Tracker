@@ -406,11 +406,13 @@ def sync_mobile_activity(
             existing_map[sid] = len(existing_events) - 1
             new_count += 1
 
-    # Rewrite raw file if any changes
+    # Atomically rewrite raw file if any changes (write to temp, then rename)
     if updated_count > 0 or new_count > 0:
-        with open(raw_file, "w", encoding="utf-8") as f:
+        tmp_file = str(raw_file) + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
             for ev in existing_events:
                 f.write(json.dumps(ev) + "\n")
+        os.replace(tmp_file, raw_file)
 
     # Aggregate summary of synced data for output display
     app_totals = {}

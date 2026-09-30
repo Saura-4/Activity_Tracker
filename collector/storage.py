@@ -21,10 +21,6 @@ def append_event(config, event_data: Dict[str, Any]) -> bool:
     date_str = start_dt.strftime("%Y-%m-%d")
     
     with _lock:
-        if _current_date != date_str:
-            _current_date = date_str
-            _recent_ids.clear()
-            
         evt_id = event_data["id"]
         if evt_id in _recent_ids:
             return False # Duplicate

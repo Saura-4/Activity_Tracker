@@ -3,7 +3,7 @@
   "name": "Activity Tracker",
   "version": "1.0.0",
   "description": "Local activity tracking for browser tabs",
-  "permissions": ["tabs", "storage", "windows", "activeTab", "idle"],
+  "permissions": ["tabs", "storage", "windows", "activeTab", "idle", "alarms"],
   "background": {
     "service_worker": "background.js"
   },

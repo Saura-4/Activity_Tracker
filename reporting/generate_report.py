@@ -185,6 +185,9 @@ def sessionize_events(
     2. Gap between previous event's end and next event's start must be <= merge_gap_seconds.
     3. Inactivity gap duration is NEVER added to active duration.
     4. Overlapping intervals are merged without double-counting active time.
+    5. Each source is sessionized independently to prevent cross-device events
+       from fragmenting continuous sessions (e.g., a mobile notification check
+       should not split a VS Code coding session into two separate sessions).
     """
     if not raw_events:
         return []
@@ -206,52 +209,63 @@ def sessionize_events(
         except Exception:
             continue
 
-    # Sort chronologically by start time, then end time
-    parsed.sort(key=lambda x: (x["_start_dt"], x["_end_dt"]))
-
-    sessions = []
+    # Partition events by source for independent sessionization
+    by_source = defaultdict(list)
     for event in parsed:
-        if not sessions:
-            sessions.append({
-                "source": event["source"],
-                "context": event.get("context", {}),
-                "context_key": event["_ctx_key"],
-                "start_dt": event["_start_dt"],
-                "end_dt": event["_end_dt"],
-                "duration_seconds": event["_duration_seconds"],
-                "raw_event_count": 1,
-                "raw_events": [event],
-            })
-            continue
+        by_source[event["source"]].append(event)
 
-        prev = sessions[-1]
-        gap = (event["_start_dt"] - prev["end_dt"]).total_seconds()
+    all_sessions = []
+    for source, source_events in by_source.items():
+        # Sort chronologically within this source
+        source_events.sort(key=lambda x: (x["_start_dt"], x["_end_dt"]))
 
-        # Check merge condition
-        if prev["context_key"] == event["_ctx_key"] and gap <= merge_gap_seconds:
-            # Overlap handling: only add non-overlapping active extension
-            if gap >= 0:
-                prev["duration_seconds"] += event["_duration_seconds"]
+        sessions = []
+        for event in source_events:
+            if not sessions:
+                sessions.append({
+                    "source": event["source"],
+                    "context": event.get("context", {}),
+                    "context_key": event["_ctx_key"],
+                    "start_dt": event["_start_dt"],
+                    "end_dt": event["_end_dt"],
+                    "duration_seconds": event["_duration_seconds"],
+                    "raw_event_count": 1,
+                    "raw_events": [event],
+                })
+                continue
+
+            prev = sessions[-1]
+            gap = (event["_start_dt"] - prev["end_dt"]).total_seconds()
+
+            # Check merge condition
+            if prev["context_key"] == event["_ctx_key"] and gap <= merge_gap_seconds:
+                # Overlap handling: only add non-overlapping active extension
+                if gap >= 0:
+                    prev["duration_seconds"] += event["_duration_seconds"]
+                else:
+                    additional = max(0.0, (event["_end_dt"] - max(prev["end_dt"], event["_start_dt"])).total_seconds())
+                    prev["duration_seconds"] += additional
+
+                prev["end_dt"] = max(prev["end_dt"], event["_end_dt"])
+                prev["raw_event_count"] += 1
+                prev["raw_events"].append(event)
             else:
-                additional = max(0.0, (event["_end_dt"] - max(prev["end_dt"], event["_start_dt"])).total_seconds())
-                prev["duration_seconds"] += additional
+                sessions.append({
+                    "source": event["source"],
+                    "context": event.get("context", {}),
+                    "context_key": event["_ctx_key"],
+                    "start_dt": event["_start_dt"],
+                    "end_dt": event["_end_dt"],
+                    "duration_seconds": event["_duration_seconds"],
+                    "raw_event_count": 1,
+                    "raw_events": [event],
+                })
 
-            prev["end_dt"] = max(prev["end_dt"], event["_end_dt"])
-            prev["raw_event_count"] += 1
-            prev["raw_events"].append(event)
-        else:
-            sessions.append({
-                "source": event["source"],
-                "context": event.get("context", {}),
-                "context_key": event["_ctx_key"],
-                "start_dt": event["_start_dt"],
-                "end_dt": event["_end_dt"],
-                "duration_seconds": event["_duration_seconds"],
-                "raw_event_count": 1,
-                "raw_events": [event],
-            })
+        all_sessions.extend(sessions)
 
-    return sessions
+    # Merge all sessions into a unified chronological timeline
+    all_sessions.sort(key=lambda x: (x["start_dt"], x["end_dt"]))
+    return all_sessions
 
 
 def clean_context_for_report(source: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -307,6 +321,33 @@ def split_duration_by_hour(start_dt: datetime, end_dt: datetime) -> Dict[int, fl
         current = segment_end
     return dict(buckets)
 
+def compute_union_seconds(intervals: List[Tuple[datetime, datetime]]) -> float:
+    """Compute total wall-clock seconds covered by a set of potentially overlapping intervals.
+    
+    Uses the sweep-line / interval union algorithm:
+    1. Sort intervals by start time.
+    2. Merge overlapping/adjacent intervals.
+    3. Sum the merged interval durations.
+    
+    This guarantees total_active_seconds <= observed_span_seconds, even when
+    PC and mobile sessions overlap (e.g., phone use while PC session is open).
+    """
+    if not intervals:
+        return 0.0
+    
+    sorted_intervals = sorted(intervals, key=lambda x: x[0])
+    merged = [sorted_intervals[0]]
+    
+    for start, end in sorted_intervals[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            # Overlapping or adjacent — extend
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    
+    return sum((end - start).total_seconds() for start, end in merged)
+
 
 def aggregate_events(
     events: List[Dict[str, Any]],
@@ -333,6 +374,9 @@ def aggregate_events(
     mobile_seconds = 0.0
     desktop_seconds = 0.0
 
+    # Collect all time intervals for wall-clock union calculation
+    all_intervals = []
+
     source_counts = defaultdict(lambda: {"duration": 0.0, "count": 0})
     domain_stats = defaultdict(lambda: {"duration": 0.0, "count": 0})
     title_stats = defaultdict(lambda: {"duration": 0.0, "count": 0, "domain": ""})
@@ -355,7 +399,10 @@ def aggregate_events(
         ctx = s.get("context", {})
         cleaned_ctx = clean_context_for_report(source, ctx)
 
-        total_seconds += dur
+        # Collect raw event intervals for wall-clock union (cross-device de-overlap without gap inflation)
+        for raw_e in s["raw_events"]:
+            all_intervals.append((raw_e["_start_dt"], raw_e["_end_dt"]))
+
         source_counts[source]["duration"] += dur
         source_counts[source]["count"] += 1
 
@@ -430,6 +477,20 @@ def aggregate_events(
     # Summary metrics
     earliest_start = min(s["start_dt"] for s in logical_sessions)
     latest_end = max(s["end_dt"] for s in logical_sessions)
+
+    # Compute total active time using interval union (prevents double-counting
+    # when PC and mobile sessions overlap in time)
+    total_seconds = compute_union_seconds(all_intervals)
+
+    # Per-source seconds (naive sums — they represent time on that specific device)
+    browser_seconds = source_counts.get("browser", {}).get("duration", 0.0)
+    vscode_seconds = source_counts.get("vscode", {}).get("duration", 0.0)
+    mobile_seconds = source_counts.get("mobile", {}).get("duration", 0.0)
+    desktop_seconds = source_counts.get("desktop", {}).get("duration", 0.0)
+
+    # Cap hourly active_seconds at 3600 (can't have more than 60 min in an hour)
+    for h in hourly:
+        hourly[h]["active"] = min(3600.0, hourly[h]["active"])
     observed_span_seconds = max(0.0, (latest_end - earliest_start).total_seconds())
 
     # Calculate actual logical context switches
