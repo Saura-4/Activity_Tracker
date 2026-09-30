@@ -88,6 +88,17 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           <!-- Populated by JS -->
         </div>
 
+        <!-- Sync Mobile & Generate Report Actions -->
+        <button id="btn-sync-mobile" onclick="triggerSyncMobile()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition disabled:opacity-50">
+          <svg class="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+          <span id="btn-sync-mobile-text">Sync Mobile</span>
+        </button>
+
+        <button id="btn-generate-report" onclick="triggerGenerateReport()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition disabled:opacity-50">
+          <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+          <span id="btn-generate-report-text">Generate Report</span>
+        </button>
+
         <!-- Custom JSON loader -->
         <label class="cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition">
           <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
@@ -1193,6 +1204,84 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       reader.readAsText(file);
     }};
 
+    function showToast(message, isError = false) {{
+      const toast = document.getElementById("toast-notification");
+      if (!toast) return;
+      toast.textContent = message;
+      if (isError) {{
+        toast.className = "fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg text-xs font-mono shadow-2xl border bg-[#1a0f11] text-rose-300 border-rose-500/40 translate-y-0 opacity-100 transition-all duration-200";
+      }} else {{
+        toast.className = "fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg text-xs font-mono shadow-2xl border bg-[#0d1712] text-emerald-300 border-emerald-500/40 translate-y-0 opacity-100 transition-all duration-200";
+      }}
+      setTimeout(() => {{
+        toast.className = "fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg text-xs font-mono shadow-2xl border translate-y-10 opacity-0 pointer-events-none transition-all duration-200";
+      }}, 3500);
+    }}
+
+    async function triggerSyncMobile() {{
+      const btn = document.getElementById("btn-sync-mobile");
+      const text = document.getElementById("btn-sync-mobile-text");
+      const orig = text.textContent;
+      try {{
+        btn.disabled = true;
+        text.textContent = "Syncing ADB...";
+        const resp = await fetch("http://127.0.0.1:8765/api/sync-mobile", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ date: currentDate }})
+        }});
+        const res = await resp.json();
+        if (resp.ok && res.status === "ok") {{
+          showToast(res.message || "Mobile sync complete!");
+          if (res.report && res.report.date) {{
+            REPORTS_DATABASE[res.report.date] = res.report;
+            renderAll();
+            initDateButtons();
+            renderCalendarHeatmap();
+          }}
+        }} else {{
+          showToast(res.message || "Mobile sync failed", true);
+        }}
+      }} catch (err) {{
+        showToast("Collector offline. Run run_collector.bat", true);
+      }} finally {{
+        btn.disabled = false;
+        text.textContent = orig;
+      }}
+    }}
+
+    async function triggerGenerateReport() {{
+      const btn = document.getElementById("btn-generate-report");
+      const text = document.getElementById("btn-generate-report-text");
+      const orig = text.textContent;
+      try {{
+        btn.disabled = true;
+        text.textContent = "Generating...";
+        const resp = await fetch("http://127.0.0.1:8765/api/generate-report", {{
+          method: "POST",
+          headers: {{ "Content-Type": "application/json" }},
+          body: JSON.stringify({{ date: currentDate }})
+        }});
+        const res = await resp.json();
+        if (resp.ok && res.status === "ok") {{
+          showToast(`Report updated for ${{res.date}}!`);
+          if (res.report && res.report.date) {{
+            REPORTS_DATABASE[res.report.date] = res.report;
+            renderAll();
+            initDateButtons();
+            renderCalendarHeatmap();
+          }}
+        }} else {{
+          showToast(res.message || "Report generation failed", true);
+        }}
+      }} catch (err) {{
+        showToast("Collector offline. Run run_collector.bat", true);
+      }} finally {{
+        btn.disabled = false;
+        text.textContent = orig;
+      }}
+    }}
+
     // Initialization
     initDateButtons();
     renderAll();
@@ -1206,26 +1295,23 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       }}
     }}, 60);
   </script>
+
+  <!-- Floating Toast Notification -->
+  <div id="toast-notification" class="fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg text-xs font-mono shadow-2xl border translate-y-10 opacity-0 pointer-events-none transition-all duration-200"></div>
 </body>
 </html>
 """
     return html
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate interactive HTML dashboard from reports and analyses")
-    parser.add_argument("--data-dir", type=str, default="Record", help="Root data directory containing report/ and analysis/")
-    parser.add_argument("--output", type=str, default="Record/reports/dashboard.html", help="Output HTML file path")
-    args = parser.parse_args()
-
-    data_dir = Path(args.data_dir)
+def generate_dashboard_files(data_dir_str: str = "Record", output_str: str = "Record/reports/dashboard.html") -> bool:
+    data_dir = Path(data_dir_str)
     if not data_dir.is_absolute():
-        data_dir = Path(__file__).resolve().parent.parent.parent / args.data_dir
+        data_dir = Path(__file__).resolve().parent.parent.parent / data_dir_str
 
     if not data_dir.exists():
         print(f"Data directory not found: {data_dir}", file=sys.stderr)
-        sys.exit(1)
+        return False
 
-    # 1. Scan JSON reports from both Record/report/**/daily/*.json and Record/reports/*.json
     reports_data = {}
     report_candidates = []
     
@@ -1246,7 +1332,6 @@ def main():
         except Exception as e:
             print(f"Warning: Failed to load report {f.name}: {e}", file=sys.stderr)
 
-    # 2. Scan Markdown analyses from Record/analysis/**/daily/*.md and Record/analysis/*.md
     analyses_data = {}
     analysis_candidates = []
     
@@ -1260,7 +1345,6 @@ def main():
         try:
             with open(f, "r", encoding="utf-8") as fp:
                 content = fp.read()
-                # Use filename stem as date (YYYY-MM-DD)
                 date_key = f.stem
                 analyses_data[date_key] = content
         except Exception as e:
@@ -1269,14 +1353,14 @@ def main():
     all_dates = sorted(set(list(reports_data.keys()) + list(analyses_data.keys())))
     if not all_dates:
         print("No reports or analysis files found.", file=sys.stderr)
-        sys.exit(1)
+        return False
 
     latest_date = all_dates[-1]
     dashboard_html = build_dashboard_html(reports_data, analyses_data, latest_date)
 
-    out_path = Path(args.output)
+    out_path = Path(output_str)
     if not out_path.is_absolute():
-        out_path = Path(__file__).resolve().parent.parent.parent / args.output
+        out_path = Path(__file__).resolve().parent.parent.parent / output_str
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fp:
@@ -1290,8 +1374,17 @@ def main():
 
     print(f"Dashboard successfully generated at: {out_path}")
     print(f"Mirrored to: {mirror_path}")
-    print(f"Loaded {len(reports_data)} JSON reports: {', '.join(reports_data.keys())}")
-    print(f"Loaded {len(analyses_data)} Markdown analyses: {', '.join(analyses_data.keys())}")
+    return True
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate interactive HTML dashboard from reports and analyses")
+    parser.add_argument("--data-dir", type=str, default="Record", help="Root data directory containing report/ and analysis/")
+    parser.add_argument("--output", type=str, default="Record/reports/dashboard.html", help="Output HTML file path")
+    args = parser.parse_args()
+
+    success = generate_dashboard_files(args.data_dir, args.output)
+    if not success:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

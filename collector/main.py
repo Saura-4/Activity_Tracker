@@ -78,11 +78,82 @@ async def handle_events(request):
         logger.error(f"Error processing events: {e}")
         return web.json_response({"status": "error", "message": str(e)}, status=400, headers=cors_headers())
 
+async def handle_sync_mobile(request):
+    try:
+        data = {}
+        if request.can_read_body:
+            try:
+                data = await request.json()
+            except Exception:
+                pass
+        target_date = data.get("date")
+        
+        import asyncio
+        from datetime import datetime
+        from collector.android_collector import sync_mobile_activity
+        from reporting.generate_report import generate_single_day_report, write_report
+        from reporting.generate_dashboard import generate_dashboard_files
+
+        # Run ADB sync in thread pool to prevent blocking aiohttp event loop
+        sync_res = await asyncio.to_thread(sync_mobile_activity, target_date=target_date)
+
+        # Auto-regenerate report for that date
+        actual_date = target_date or datetime.now().strftime("%Y-%m-%d")
+        report = await asyncio.to_thread(generate_single_day_report, config, actual_date)
+        await asyncio.to_thread(write_report, config, report, f"{actual_date}.json")
+        
+        # Regenerate dashboard HTML
+        await asyncio.to_thread(generate_dashboard_files, config.data_directory)
+
+        return web.json_response({
+            "status": "ok",
+            "message": f"Mobile synced: {sync_res.get('total_sessions', 0)} sessions",
+            "sync_result": sync_res,
+            "report": report
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"Error in handle_sync_mobile: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": str(e)
+        }, status=500, headers=cors_headers())
+
+async def handle_generate_report(request):
+    try:
+        data = {}
+        if request.can_read_body:
+            try:
+                data = await request.json()
+            except Exception:
+                pass
+        import asyncio
+        from datetime import datetime
+        from reporting.generate_report import generate_single_day_report, write_report
+        from reporting.generate_dashboard import generate_dashboard_files
+
+        target_date = data.get("date") or datetime.now().strftime("%Y-%m-%d")
+        report = await asyncio.to_thread(generate_single_day_report, config, target_date)
+        await asyncio.to_thread(write_report, config, report, f"{target_date}.json")
+        await asyncio.to_thread(generate_dashboard_files, config.data_directory)
+
+        return web.json_response({
+            "status": "ok",
+            "message": f"Report generated for {target_date}",
+            "date": target_date,
+            "report": report
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"Error in handle_generate_report: {e}")
+        return web.json_response({
+            "status": "error",
+            "message": str(e)
+        }, status=500, headers=cors_headers())
+
 async def handle_root(request):
     return web.json_response({
         "status": "ok",
         "service": "Activity Tracker Collector",
-        "endpoints": ["GET /health", "GET /config", "POST /event", "POST /events"]
+        "endpoints": ["GET /health", "GET /config", "POST /event", "POST /events", "POST /api/sync-mobile", "POST /api/generate-report"]
     }, headers=cors_headers())
 
 app = web.Application()
@@ -92,6 +163,8 @@ app.router.add_get('/health', handle_health)
 app.router.add_get('/config', handle_config)
 app.router.add_post('/event', handle_event)
 app.router.add_post('/events', handle_events)
+app.router.add_post('/api/sync-mobile', handle_sync_mobile)
+app.router.add_post('/api/generate-report', handle_generate_report)
 
 def main():
     logger.info(f"Starting collector on {config.collector_host}:{config.collector_port}")
