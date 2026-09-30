@@ -268,84 +268,76 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </div>
     </section>
 
-    <!-- 24-Hour Gantt Timeline Strip -->
-    <section id="analytics-ribbon-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold text-[var(--foreground)]">Timeline Ribbon</h2>
-        <div class="text-[11px] text-slate-400 flex items-center gap-3">
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-sky-400"></span> Browser</span>
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-purple-400"></span> Mobile</span>
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> Desktop</span>
-          <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-amber-400"></span> VS Code</span>
-        </div>
-      </div>
-
-      <!-- Timeline Container -->
-      <div class="space-y-1">
-        <div class="relative w-full h-10 bg-[#090d16] rounded-lg border border-[var(--border)] overflow-hidden" id="timeline-strip-container">
-          <!-- Session blocks injected here -->
+    <!-- Hourly Activity Explorer & Inspector -->
+    <section id="analytics-hourly-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-semibold text-[var(--foreground)]">Hourly Activity Explorer</h2>
+            <span id="hourly-summary-badge" class="text-xs font-mono text-slate-400"></span>
+          </div>
+          <p class="text-xs text-[var(--muted-foreground)] mt-0.5">Inspect what you were doing and for how long during each hour</p>
         </div>
 
-        <!-- 24-hour axis labels -->
-        <div class="relative w-full h-4 text-[10px] font-mono text-slate-500 flex justify-between px-1">
-          <span>00:00</span>
-          <span>03:00</span>
-          <span>06:00</span>
-          <span>09:00</span>
-          <span>12:00</span>
-          <span>15:00</span>
-          <span>18:00</span>
-          <span>21:00</span>
-          <span>23:59</span>
-        </div>
-      </div>
-
-      <!-- Hover detail card -->
-      <div id="timeline-hover-card" class="p-2.5 bg-[#090d16] border border-[var(--border)] rounded-lg text-xs flex flex-wrap items-center justify-between gap-2">
+        <!-- Mode Toggle Controls -->
         <div class="flex items-center gap-2">
-          <span id="hover-source-pill" class="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium uppercase bg-[#161b22] text-slate-400 border border-[#30363d]">Details</span>
-          <span id="hover-title" class="text-slate-300">Hover blocks above to inspect session</span>
+          <div class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs font-medium" id="hourly-mode-toggle">
+            <button id="btn-mode-inspector" onclick="setHourlyViewMode('inspector')" class="px-2.5 py-1 rounded-md bg-[#21262d] text-white transition">Hour Inspector</button>
+            <button id="btn-mode-schedule" onclick="setHourlyViewMode('schedule')" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition">24h Schedule</button>
+          </div>
         </div>
-        <div id="hover-time" class="font-mono text-slate-500 text-[11px]">--:-- &ndash; --:--</div>
+      </div>
+
+      <!-- 24-Hour Interactive Rhythm Bar Strip -->
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+          <span class="font-mono">Select an hour below to inspect:</span>
+          <div class="flex items-center gap-3">
+            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-sky-400"></span> Browser</span>
+            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-purple-400"></span> Mobile</span>
+            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-emerald-400"></span> Desktop</span>
+            <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-amber-400"></span> VS Code</span>
+          </div>
+        </div>
+
+        <div id="hourly-bars-container" class="h-44 flex items-end gap-1 sm:gap-1.5 pt-6 pb-2 bg-[#090d16] border border-[var(--border)] rounded-xl px-2 sm:px-3 overflow-x-auto custom-scroll">
+          <!-- 24 interactive hourly bars injected by JS -->
+        </div>
+
+        <div class="flex justify-between text-[10px] font-mono text-slate-500 px-2">
+          <span>00:00 (Night)</span>
+          <span>06:00 (Morning)</span>
+          <span>12:00 (Noon)</span>
+          <span>18:00 (Evening)</span>
+          <span>23:00 (Night)</span>
+        </div>
+      </div>
+
+      <!-- Selected Hour Inspector Card -->
+      <div id="hourly-inspector-container" class="bg-[#090d16] border border-[var(--border)] rounded-xl p-4 space-y-3">
+        <!-- Injected by renderHourlyInspector() -->
+      </div>
+
+      <!-- Chronological 24h Schedule Feed (Toggleable) -->
+      <div id="hourly-schedule-container" class="hidden bg-[#090d16] border border-[var(--border)] rounded-xl p-4 space-y-2.5">
+        <!-- Injected by renderHourlySchedule() -->
       </div>
     </section>
 
-    <!-- Hourly Focus Density Chart & Longest Sessions -->
-    <section id="analytics-charts-section" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Detailed Leaderboards & Focus Blocks Grid (Longest Focus Sessions, Domains, Mobile Apps, Desktop Apps) -->
+    <section id="analytics-leaderboards-section" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       
-      <!-- Hourly Stacked Bar Chart -->
-      <div class="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-4">
-        <div>
-          <h2 class="text-base font-bold text-[var(--foreground)]">Hourly Activity Rhythm</h2>
-          <p class="text-xs text-[var(--muted-foreground)]">Active minutes per hour throughout the day</p>
-        </div>
-
-        <div id="hourly-bars-container" class="h-48 flex items-end gap-1.5 sm:gap-2 pt-6 pb-2 border-b border-slate-800/80 overflow-x-auto custom-scroll">
-          <!-- Hourly bars injected by JS -->
-        </div>
-
-        <div class="flex justify-between text-[11px] font-mono text-slate-500 px-1">
-          <span>12 AM (Night)</span>
-          <span>6 AM (Morning)</span>
-          <span>12 PM (Noon)</span>
-          <span>6 PM (Evening)</span>
-          <span>11 PM (Night)</span>
-        </div>
-      </div>
-
       <!-- Top Longest Focused Sessions -->
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
-        <h2 class="text-sm font-semibold text-[var(--foreground)]">Longest Sessions</h2>
-        <div id="longest-sessions-list" class="space-y-2">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-[var(--foreground)]">Longest Sessions</h2>
+          <span id="longest-count-badge" class="text-xs font-mono text-slate-500">Top 5</span>
+        </div>
+        <div id="longest-sessions-list" class="space-y-2 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
         </div>
       </div>
 
-    </section>
-
-    <!-- Detailed Leaderboards Grid (Domains, Mobile Apps, Desktop Apps) -->
-    <section id="analytics-leaderboards-section" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      
       <!-- Domains Card -->
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
@@ -369,7 +361,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </div>
 
       <!-- Desktop Applications Card -->
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col md:col-span-2 lg:col-span-1">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-[var(--foreground)]">Desktop Apps</h2>
           <span id="desktop-count-badge" class="text-xs font-mono text-slate-500">0 apps</span>
@@ -384,7 +376,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     <!-- Comprehensive Filterable Timeline Table -->
     <section id="analytics-ledger-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h2 class="text-sm font-semibold text-[var(--foreground)]">Session Ledger</h2>
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-semibold text-[var(--foreground)]">Session Ledger</h2>
+          <div id="ledger-hour-filter-pill" class="hidden inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-mono bg-sky-500/10 text-sky-400 border border-sky-500/20"></div>
+        </div>
 
         <!-- Filter tabs & Search -->
         <div class="flex flex-wrap items-center gap-2">
@@ -420,6 +415,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     let currentFilter = "all";
     let searchQuery = "";
     let activeMainTab = "split"; // 'split', 'analytics', 'journal'
+    let selectedHour = null;
+    let hourlyViewMode = "inspector"; // 'inspector' or 'schedule'
+    let activeHourFilter = null;
 
     function formatSecs(secs) {{
       const s = Math.round(secs);
@@ -669,6 +667,8 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
           block.onclick = () => {{
             currentDate = dateStr;
+            activeHourFilter = null;
+            selectedHour = null;
             renderAll();
             initDateButtons();
             renderCalendarHeatmap();
@@ -726,6 +726,8 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         btn.innerHTML = `${{d}}${{extraDot}}`;
         btn.onclick = () => {{
           currentDate = d;
+          activeHourFilter = null;
+          selectedHour = null;
           renderAll();
           initDateButtons();
           renderCalendarHeatmap();
@@ -737,30 +739,26 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     function updateViewModeVisibility() {{
       const jSec = document.getElementById("journal-section");
       const splitSec = document.getElementById("analytics-split-section");
-      const ribbonSec = document.getElementById("analytics-ribbon-section");
-      const chartsSec = document.getElementById("analytics-charts-section");
+      const hourlySec = document.getElementById("analytics-hourly-section");
       const boardsSec = document.getElementById("analytics-leaderboards-section");
       const ledgerSec = document.getElementById("analytics-ledger-section");
 
       if (activeMainTab === "journal") {{
         jSec.classList.remove("hidden");
         splitSec.classList.add("hidden");
-        ribbonSec.classList.add("hidden");
-        chartsSec.classList.add("hidden");
+        hourlySec.classList.add("hidden");
         boardsSec.classList.add("hidden");
         ledgerSec.classList.add("hidden");
       }} else if (activeMainTab === "analytics") {{
         jSec.classList.add("hidden");
         splitSec.classList.remove("hidden");
-        ribbonSec.classList.remove("hidden");
-        chartsSec.classList.remove("hidden");
+        hourlySec.classList.remove("hidden");
         boardsSec.classList.remove("hidden");
         ledgerSec.classList.remove("hidden");
       }} else {{ // 'split'
         jSec.classList.remove("hidden");
         splitSec.classList.remove("hidden");
-        ribbonSec.classList.remove("hidden");
-        chartsSec.classList.remove("hidden");
+        hourlySec.classList.remove("hidden");
         boardsSec.classList.remove("hidden");
         ledgerSec.classList.remove("hidden");
       }}
@@ -869,8 +867,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const pcPct = totalSec > 0 ? Math.round((pcTotal / totalSec) * 100) : 0;
       document.getElementById("device-ratio-badge").textContent = `PC: ${{pcPct}}% | Mobile: ${{100 - pcPct}}%`;
 
-      renderTimelineRibbon(rep.timeline || []);
-      renderHourlyChart(rep.hourly_breakdown || []);
+      renderHourlyExplorer();
       renderLongestSessions(rep.longest_sessions || []);
       renderDomains(rep.domains || []);
       renderMobileApps(rep.apps || []);
@@ -879,101 +876,466 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       updateViewModeVisibility();
     }}
 
-    function renderTimelineRibbon(timeline) {{
-      const container = document.getElementById("timeline-strip-container");
-      container.innerHTML = "";
-      if (!timeline || timeline.length === 0) return;
-
-      timeline.forEach(item => {{
-        const start = new Date(item.start);
-        const end = new Date(item.end);
-        
-        const startSec = start.getHours() * 3600 + start.getMinutes() * 60 + start.getSeconds();
-        const endSec = end.getHours() * 3600 + end.getMinutes() * 60 + end.getSeconds();
-        
-        const leftPct = (startSec / 86400) * 100;
-        let widthPct = ((endSec - startSec) / 86400) * 100;
-        if (widthPct < 0.2) widthPct = 0.2;
-
-        const block = document.createElement("div");
-        block.className = "absolute top-2 bottom-2 rounded-sm cursor-pointer transition hover:opacity-100 hover:scale-y-125 hover:z-20";
-        block.style.left = `${{leftPct}}%`;
-        block.style.width = `${{widthPct}}%`;
-
-        let colorClass = "bg-sky-500/80";
-        if (item.source === "mobile") colorClass = "bg-purple-500/80";
-        else if (item.source === "desktop") colorClass = "bg-emerald-500/80";
-        else if (item.source === "vscode") colorClass = "bg-amber-500/80";
-
-        block.className += ` ${{colorClass}}`;
-
-        block.onmouseenter = () => {{
-          const title = item.context?.title || item.context?.app || item.context?.domain || item.source;
-          const sub = item.context?.domain || item.context?.package || item.context?.workspace || "";
-          document.getElementById("hover-title").innerHTML = `<strong class="text-white">${{title}}</strong> ${{sub ? '<span class="text-slate-400">(' + sub + ')</span>' : ''}}`;
-          document.getElementById("hover-time").textContent = `${{parseTimeOnly(item.start)}} - ${{parseTimeOnly(item.end)}} (${{formatSecs(item.duration_seconds)}})`;
-          
-          const pill = document.getElementById("hover-source-pill");
-          pill.textContent = item.source;
-          pill.className = `px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider ${{
-            item.source === 'mobile' ? 'bg-purple-900/60 text-purple-300 border border-purple-700' :
-            item.source === 'desktop' ? 'bg-emerald-900/60 text-emerald-300 border border-emerald-700' :
-            item.source === 'vscode' ? 'bg-amber-900/60 text-amber-300 border border-amber-700' :
-            'bg-sky-900/60 text-sky-300 border border-sky-700'
-          }}`;
-        }};
-
-        container.appendChild(block);
-      }});
+    function parseLocalTimeParts(isoStr) {{
+      if (!isoStr) return null;
+      const match = isoStr.match(/T(\\d{2}):(\\d{2}):(\\d{2})/);
+      if (match) {{
+        const h = parseInt(match[1], 10);
+        const m = parseInt(match[2], 10);
+        const s = parseInt(match[3], 10);
+        return {{ hour: h, minute: m, second: s, totalSeconds: h * 3600 + m * 60 + s }};
+      }}
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return null;
+      return {{
+        hour: d.getHours(),
+        minute: d.getMinutes(),
+        second: d.getSeconds(),
+        totalSeconds: d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()
+      }};
     }}
 
-    function renderHourlyChart(hourly) {{
-      const container = document.getElementById("hourly-bars-container");
-      container.innerHTML = "";
-
-      const hourMap = {{}};
+    function computeHourlyActivityData(rep) {{
+      const timeline = rep?.timeline || [];
+      const hourly = rep?.hourly_breakdown || [];
+      
+      const hourBuckets = [];
       for (let h = 0; h < 24; h++) {{
-        hourMap[h] = {{ active_seconds: 0, browser: 0, mobile: 0, desktop: 0, vscode: 0 }};
+        hourBuckets.push({{
+          hour: h,
+          totalSeconds: 0,
+          reportedActiveSeconds: 0,
+          sources: {{ browser: 0, mobile: 0, desktop: 0, vscode: 0 }},
+          activities: {{}}
+        }});
       }}
 
+      // Populate reported active seconds from hourly_breakdown if present
       hourly.forEach(entry => {{
-        if (hourMap[entry.hour] !== undefined) {{
-          hourMap[entry.hour] = {{
-            active_seconds: entry.active_seconds || 0,
-            browser: entry.browser_seconds || 0,
-            mobile: entry.mobile_seconds || 0,
-            desktop: entry.desktop_seconds || 0,
-            vscode: entry.vscode_seconds || 0
-          }};
+        const h = entry.hour;
+        if (hourBuckets[h]) {{
+          hourBuckets[h].sources.browser = entry.browser_seconds || 0;
+          hourBuckets[h].sources.mobile = entry.mobile_seconds || 0;
+          hourBuckets[h].sources.desktop = entry.desktop_seconds || 0;
+          hourBuckets[h].sources.vscode = entry.vscode_seconds || 0;
+          hourBuckets[h].reportedActiveSeconds = entry.active_seconds || 0;
         }}
       }});
 
+      // Distribute timeline sessions into hourly buckets
+      timeline.forEach(item => {{
+        const sPart = parseLocalTimeParts(item.start);
+        const ePart = parseLocalTimeParts(item.end);
+        if (!sPart || !ePart) return;
+
+        let sSec = sPart.totalSeconds;
+        let eSec = ePart.totalSeconds;
+        if (eSec < sSec) eSec += 86400; // Passed midnight
+
+        const nominalSpan = eSec - sSec;
+        const recordedDur = item.duration_seconds || nominalSpan;
+        const scale = nominalSpan > 0 ? Math.min(1.0, recordedDur / nominalSpan) : 1.0;
+
+        const src = item.source || "unknown";
+        const ctx = item.context || {{}};
+
+        let title = "";
+        let subtitle = "";
+        if (src === "browser") {{
+          title = ctx.title || ctx.domain || "Browser";
+          subtitle = ctx.domain || "";
+        }} else if (src === "desktop") {{
+          title = ctx.app || "Desktop App";
+          subtitle = (ctx.title && ctx.title !== ctx.app) ? ctx.title : "";
+        }} else if (src === "mobile") {{
+          title = ctx.app || ctx.package || "Mobile App";
+          subtitle = ctx.package || "";
+        }} else if (src === "vscode") {{
+          title = ctx.file || ctx.workspace || "VS Code";
+          subtitle = (ctx.workspace ? ctx.workspace + " " : "") + (ctx.language ? "(" + ctx.language + ")" : "");
+        }} else {{
+          title = src;
+        }}
+
+        const actKey = `${{src}}:::${{title}}:::${{subtitle}}`;
+        const startH = Math.floor(sSec / 3600);
+        const endH = Math.floor(eSec / 3600);
+
+        for (let h = startH; h <= endH; h++) {{
+          if (h >= 24) break;
+          const hStart = h * 3600;
+          const hEnd = (h + 1) * 3600;
+
+          const ovStart = Math.max(sSec, hStart);
+          const ovEnd = Math.min(eSec, hEnd);
+
+          if (ovEnd > ovStart) {{
+            const rawSec = ovEnd - ovStart;
+            const effectiveSec = rawSec * scale;
+            const b = hourBuckets[h];
+
+            b.totalSeconds += effectiveSec;
+            if (!b.activities[actKey]) {{
+              b.activities[actKey] = {{
+                source: src,
+                title: title,
+                subtitle: subtitle,
+                durationSeconds: 0,
+                sessionCount: 0
+              }};
+            }}
+            b.activities[actKey].durationSeconds += effectiveSec;
+            b.activities[actKey].sessionCount += 1;
+          }}
+        }}
+      }});
+
+      // Post-process each bucket
+      let peakHour = 0;
+      let maxSeconds = 0;
+      let activeHoursCount = 0;
+
+      hourBuckets.forEach(b => {{
+        if (b.reportedActiveSeconds > 0) {{
+          b.displayActiveSeconds = b.reportedActiveSeconds;
+        }} else {{
+          b.displayActiveSeconds = b.totalSeconds;
+        }}
+
+        if (b.displayActiveSeconds > 0) {{
+          activeHoursCount++;
+          if (b.displayActiveSeconds > maxSeconds) {{
+            maxSeconds = b.displayActiveSeconds;
+            peakHour = b.hour;
+          }}
+        }}
+
+        const actList = Object.values(b.activities);
+        actList.sort((a, b) => b.durationSeconds - a.durationSeconds);
+        b.sortedActivities = actList;
+      }});
+
+      return {{
+        buckets: hourBuckets,
+        peakHour: peakHour,
+        maxSeconds: maxSeconds,
+        activeHoursCount: activeHoursCount
+      }};
+    }}
+
+    function renderHourlyExplorer() {{
+      const rep = REPORTS_DATABASE[currentDate] || {{}};
+      const data = computeHourlyActivityData(rep);
+      window.CURRENT_HOURLY_DATA = data;
+
+      if (selectedHour === null || selectedHour < 0 || selectedHour > 23) {{
+        selectedHour = data.peakHour;
+      }}
+
+      const badge = document.getElementById("hourly-summary-badge");
+      if (badge) {{
+        if (data.activeHoursCount > 0) {{
+          badge.textContent = `${{data.activeHoursCount}} active hours • Peak: ${{String(data.peakHour).padStart(2, "0")}}:00 (${{formatSecs(data.maxSeconds)}})`;
+        }} else {{
+          badge.textContent = "0 active hours";
+        }}
+      }}
+
+      renderHourlyRhythmBars(data);
+      renderHourlyInspector(data);
+      renderHourlySchedule(data);
+    }}
+
+    function renderHourlyRhythmBars(data) {{
+      const container = document.getElementById("hourly-bars-container");
+      if (!container) return;
+      container.innerHTML = "";
+
       for (let h = 0; h < 24; h++) {{
-        const item = hourMap[h];
+        const item = data.buckets[h];
+        const isSelected = h === selectedHour;
+        const total = item.displayActiveSeconds || item.totalSeconds || 0;
+        const heightPct = Math.min(100, (total / 3600) * 100);
+
+        const bSec = item.sources.browser || 0;
+        const mSec = item.sources.mobile || 0;
+        const dSec = item.sources.desktop || 0;
+        const vSec = item.sources.vscode || 0;
+        const sumSrc = bSec + mSec + dSec + vSec || (total || 1);
+
+        const bH = (bSec / sumSrc) * 100;
+        const mH = (mSec / sumSrc) * 100;
+        const dH = (dSec / sumSrc) * 100;
+        const vH = (vSec / sumSrc) * 100;
+
         const col = document.createElement("div");
-        col.className = "flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer";
-
-        const total = item.active_seconds;
-        const totalHeightPct = Math.min(100, (total / 3600) * 100);
-
-        const bH = total > 0 ? (item.browser / total) * 100 : 0;
-        const mH = total > 0 ? (item.mobile / total) * 100 : 0;
-        const dH = total > 0 ? (item.desktop / total) * 100 : 0;
-        const vH = total > 0 ? (item.vscode / total) * 100 : 0;
+        col.className = `flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer select-none transition-all p-0.5 rounded-lg ${{isSelected ? 'bg-sky-500/10 ring-2 ring-sky-400 ring-offset-1 ring-offset-[#090d16]' : 'hover:bg-[#161b22]'}}`;
+        
+        const topActs = (item.sortedActivities || []).slice(0, 2);
+        let topActsHtml = "";
+        if (topActs.length > 0) {{
+          topActsHtml = topActs.map(a => `<div class="truncate text-[10px] text-slate-300">• ${{escapeHtml(a.title.substring(0, 28))}}: <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong></div>`).join("");
+        }} else if (total === 0) {{
+          topActsHtml = `<div class="text-[10px] text-slate-500">No activity (Sleep / Idle)</div>`;
+        }}
 
         col.innerHTML = `
-          <div class="opacity-0 group-hover:opacity-100 transition absolute -top-12 z-30 bg-slate-900 border border-slate-700 text-slate-200 text-[10px] px-2 py-1 rounded shadow-lg whitespace-nowrap pointer-events-none">
-            ${{h}}:00 &bull; ${{formatSecs(total)}}
+          <div class="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-20 z-30 bg-slate-950 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg shadow-2xl pointer-events-none min-w-[160px] space-y-1">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-1">
+              <span class="font-mono font-bold text-sky-400">${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00</span>
+              <span class="font-mono text-slate-300 font-semibold">${{formatSecs(total)}}</span>
+            </div>
+            ${{topActsHtml}}
           </div>
-          <div class="w-full bg-slate-900 rounded-t-sm flex flex-col-reverse overflow-hidden transition-all duration-300 group-hover:brightness-125" style="height: ${{Math.max(4, totalHeightPct)}}%">
+          <div class="w-full bg-[#161b22] rounded-t-sm flex flex-col-reverse overflow-hidden transition-all duration-300 group-hover:brightness-125" style="height: ${{Math.max(6, heightPct)}}%">
             <div class="bg-sky-500 w-full" style="height: ${{bH}}%"></div>
             <div class="bg-purple-500 w-full" style="height: ${{mH}}%"></div>
             <div class="bg-emerald-500 w-full" style="height: ${{dH}}%"></div>
             <div class="bg-amber-500 w-full" style="height: ${{vH}}%"></div>
           </div>
-          <span class="text-[9px] font-mono text-slate-500 mt-1">${{h}}</span>
+          <span class="text-[10px] font-mono mt-1 ${{isSelected ? 'text-sky-300 font-bold' : total > 0 ? 'text-slate-300 font-medium' : 'text-slate-600'}}">${{String(h).padStart(2, "0")}}</span>
         `;
+
+        col.onclick = () => {{
+          selectHour(h);
+        }};
+
         container.appendChild(col);
+      }}
+    }}
+
+    function renderHourlyInspector(data) {{
+      const container = document.getElementById("hourly-inspector-container");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const h = selectedHour !== null ? selectedHour : 0;
+      const bucket = data.buckets[h] || {{ hour: h, totalSeconds: 0, sortedActivities: [] }};
+      const totalSec = bucket.displayActiveSeconds || bucket.totalSeconds || 0;
+      const acts = bucket.sortedActivities || [];
+      const pctOfHour = Math.min(100, Math.round((totalSec / 3600) * 100));
+      const isFiltered = activeHourFilter === h;
+
+      const header = document.createElement("div");
+      header.className = "flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]";
+      header.innerHTML = `
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center font-mono font-bold text-sm text-sky-400">
+            ${{String(h).padStart(2, "0")}}h
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-semibold text-[var(--foreground)]">Hour ${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00</h3>
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono font-medium ${{totalSec > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'}}">
+                ${{totalSec > 0 ? formatSecs(totalSec) + ' active (' + pctOfHour + '%)' : 'No Activity'}}
+              </span>
+            </div>
+            <div class="text-xs text-slate-400 mt-0.5 font-mono">
+              ${{acts.length > 0 ? `${{acts.length}} distinct activities &bull; ${{acts.reduce((acc, a) => acc + a.sessionCount, 0)}} sessions` : 'Idle span / Sleep'}}
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 self-end sm:self-auto">
+          <button onclick="selectHour(${{h > 0 ? h - 1 : 23}})" class="px-2.5 py-1 rounded-md text-xs font-mono bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition" title="Previous hour">
+            &larr; Prev
+          </button>
+          <button onclick="selectHour(${{h < 23 ? h + 1 : 0}})" class="px-2.5 py-1 rounded-md text-xs font-mono bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition" title="Next hour">
+            Next &rarr;
+          </button>
+          <button onclick="selectHour(${{data.peakHour}})" class="px-2.5 py-1 rounded-md text-xs font-mono ${{h === data.peakHour ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)]'}} transition" title="Jump to peak activity hour">
+            Peak (${{String(data.peakHour).padStart(2, "0")}}:00)
+          </button>
+          <button onclick="toggleHourFilter(${{h}})" class="px-2.5 py-1 rounded-md text-xs font-mono ${{isFiltered ? 'bg-sky-500 text-white font-semibold' : 'bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)]'}} transition">
+            ${{isFiltered ? 'Clear Filter' : 'Filter Ledger'}}
+          </button>
+        </div>
+      `;
+      container.appendChild(header);
+
+      if (acts.length === 0 || totalSec === 0) {{
+        const empty = document.createElement("div");
+        empty.className = "py-8 text-center text-xs text-slate-500 space-y-1 font-mono";
+        empty.innerHTML = `
+          <div>No active screen sessions logged between ${{String(h).padStart(2, "0")}}:00 and ${{String(h + 1).padStart(2, "0")}}:00</div>
+          <div class="text-[11px] text-slate-600">Computer was idle, locked, or sleeping.</div>
+        `;
+        container.appendChild(empty);
+        return;
+      }}
+
+      const listContainer = document.createElement("div");
+      listContainer.className = "space-y-2 pt-1";
+
+      acts.forEach((act, idx) => {{
+        const itemPct = totalSec > 0 ? (act.durationSeconds / totalSec) * 100 : 0;
+
+        let srcBadge = "bg-sky-500/10 text-sky-400 border-sky-500/20";
+        let barColor = "bg-sky-500";
+        if (act.source === "mobile") {{
+          srcBadge = "bg-purple-500/10 text-purple-400 border-purple-500/20";
+          barColor = "bg-purple-500";
+        }} else if (act.source === "desktop") {{
+          srcBadge = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+          barColor = "bg-emerald-500";
+        }} else if (act.source === "vscode") {{
+          srcBadge = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+          barColor = "bg-amber-500";
+        }}
+
+        const row = document.createElement("div");
+        row.className = "p-2.5 rounded-lg bg-[#0d1117] border border-[var(--border)] hover:border-slate-700 transition space-y-2";
+        row.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="font-mono text-slate-500 font-bold text-xs w-4 shrink-0">${{idx + 1}}.</span>
+              <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wider border shrink-0 ${{srcBadge}}">
+                ${{act.source}}
+              </span>
+              <div class="min-w-0">
+                <div class="font-medium text-slate-200 truncate" title="${{escapeHtml(act.title)}}">${{escapeHtml(act.title)}}</div>
+                ${{act.subtitle ? `<div class="text-[11px] text-slate-500 font-mono truncate" title="${{escapeHtml(act.subtitle)}}">${{escapeHtml(act.subtitle)}}</div>` : ''}}
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3 shrink-0 self-end sm:self-auto font-mono text-xs">
+              <span class="text-slate-400">${{itemPct.toFixed(1)}}%</span>
+              <span class="font-bold text-white bg-[#161b22] px-2 py-0.5 rounded border border-[var(--border)]">${{formatSecs(act.durationSeconds)}}</span>
+            </div>
+          </div>
+
+          <div class="w-full bg-[#161b22] h-1.5 rounded-full overflow-hidden">
+            <div class="${{barColor}} h-full rounded-full transition-all duration-300" style="width: ${{Math.min(100, itemPct)}}%"></div>
+          </div>
+        `;
+        listContainer.appendChild(row);
+      }});
+
+      container.appendChild(listContainer);
+    }}
+
+    function renderHourlySchedule(data) {{
+      const container = document.getElementById("hourly-schedule-container");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const buckets = data.buckets;
+      let idleStart = -1;
+
+      for (let h = 0; h < 24; h++) {{
+        const b = buckets[h];
+        const total = b.displayActiveSeconds || b.totalSeconds || 0;
+
+        if (total === 0) {{
+          if (idleStart === -1) {{
+            idleStart = h;
+          }}
+          if (h === 23 && idleStart !== -1) {{
+            flushIdleBlock(container, idleStart, 23);
+          }}
+          continue;
+        }}
+
+        if (idleStart !== -1) {{
+          flushIdleBlock(container, idleStart, h - 1);
+          idleStart = -1;
+        }}
+
+        const row = document.createElement("div");
+        row.className = `p-3 rounded-xl bg-[#0d1117] border ${{h === selectedHour ? 'border-sky-500/60 ring-1 ring-sky-500/30' : 'border-[var(--border)]'}} hover:border-slate-700 transition cursor-pointer space-y-2`;
+        row.onclick = () => {{
+          selectHour(h);
+          setHourlyViewMode('inspector');
+        }};
+
+        const acts = (b.sortedActivities || []).slice(0, 3);
+        const actChips = acts.map(a => {{
+          let col = "text-sky-400 bg-sky-500/10 border-sky-500/20";
+          if (a.source === "mobile") col = "text-purple-400 bg-purple-500/10 border-purple-500/20";
+          else if (a.source === "desktop") col = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+          else if (a.source === "vscode") col = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+          return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono border ${{col}}">
+            <span class="font-medium text-slate-200 truncate max-w-[160px]">${{escapeHtml(a.title)}}</span>
+            <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong>
+          </span>`;
+        }}).join(" ");
+
+        const pctOfHour = Math.min(100, Math.round((total / 3600) * 100));
+
+        row.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-mono font-bold text-xs text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
+                ${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00
+              </span>
+              <span class="text-xs text-slate-300 font-mono font-semibold">${{formatSecs(total)}} active</span>
+              <span class="text-[11px] text-slate-500 font-mono">(${{pctOfHour}}%)</span>
+            </div>
+            <span class="text-[11px] font-mono text-slate-500">${{b.sortedActivities.length}} activities &rarr;</span>
+          </div>
+          <div class="flex flex-wrap gap-1.5 pt-0.5">
+            ${{actChips}}
+          </div>
+        `;
+        container.appendChild(row);
+      }}
+    }}
+
+    function flushIdleBlock(container, startH, endH) {{
+      const hoursCount = endH - startH + 1;
+      const block = document.createElement("div");
+      block.className = "py-2 px-3 rounded-lg bg-[#090d16]/70 border border-dashed border-[#21262d] flex items-center justify-between text-xs text-slate-500 font-mono";
+      block.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+          <span>${{String(startH).padStart(2, "0")}}:00 &ndash; ${{String(endH + 1).padStart(2, "0")}}:00</span>
+          <span>(${{hoursCount}}h idle)</span>
+        </div>
+        <span class="text-[11px] text-slate-600">Inactive / Sleep</span>
+      `;
+      container.appendChild(block);
+    }}
+
+    function setHourlyViewMode(mode) {{
+      hourlyViewMode = mode;
+      const inspectorView = document.getElementById("hourly-inspector-container");
+      const scheduleView = document.getElementById("hourly-schedule-container");
+      const btnInspector = document.getElementById("btn-mode-inspector");
+      const btnSchedule = document.getElementById("btn-mode-schedule");
+
+      if (mode === "inspector") {{
+        inspectorView.classList.remove("hidden");
+        scheduleView.classList.add("hidden");
+        btnInspector.className = "px-2.5 py-1 rounded-md bg-[#21262d] text-white transition";
+        btnSchedule.className = "px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition";
+      }} else {{
+        inspectorView.classList.add("hidden");
+        scheduleView.classList.remove("hidden");
+        btnInspector.className = "px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition";
+        btnSchedule.className = "px-2.5 py-1 rounded-md bg-[#21262d] text-white transition";
+      }}
+    }}
+
+    function selectHour(h) {{
+      selectedHour = h;
+      if (window.CURRENT_HOURLY_DATA) {{
+        renderHourlyRhythmBars(window.CURRENT_HOURLY_DATA);
+        renderHourlyInspector(window.CURRENT_HOURLY_DATA);
+        renderHourlySchedule(window.CURRENT_HOURLY_DATA);
+      }}
+    }}
+
+    function toggleHourFilter(h) {{
+      if (activeHourFilter === h) {{
+        activeHourFilter = null;
+      }} else {{
+        activeHourFilter = h;
+      }}
+      renderHourlyExplorer();
+      renderLedger(REPORTS_DATABASE[currentDate]?.timeline || []);
+      const ledgerSec = document.getElementById("analytics-ledger-section");
+      if (ledgerSec && activeHourFilter !== null) {{
+        ledgerSec.scrollIntoView({{ behavior: 'smooth' }});
       }}
     }}
 
@@ -1098,6 +1460,20 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
       let filtered = (timeline || []).filter(item => {{
         if (currentFilter !== "all" && item.source !== currentFilter) return false;
+        if (activeHourFilter !== null) {{
+          const sPart = parseLocalTimeParts(item.start);
+          const ePart = parseLocalTimeParts(item.end);
+          if (sPart && ePart) {{
+            let sSec = sPart.totalSeconds;
+            let eSec = ePart.totalSeconds;
+            if (eSec < sSec) eSec += 86400;
+            const hStart = activeHourFilter * 3600;
+            const hEnd = (activeHourFilter + 1) * 3600;
+            if (Math.min(eSec, hEnd) <= Math.max(sSec, hStart)) {{
+              return false;
+            }}
+          }}
+        }}
         if (searchQuery) {{
           const q = searchQuery.toLowerCase();
           const title = (item.context?.title || item.context?.app || item.context?.domain || "").toLowerCase();
@@ -1106,6 +1482,20 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         }}
         return true;
       }});
+
+      // Update Ledger filter pill
+      const filterPill = document.getElementById("ledger-hour-filter-pill");
+      if (filterPill) {{
+        if (activeHourFilter !== null) {{
+          filterPill.classList.remove("hidden");
+          filterPill.innerHTML = `
+            <span>Hour ${{String(activeHourFilter).padStart(2, "0")}}:00 &ndash; ${{String(activeHourFilter + 1).padStart(2, "0")}}:00</span>
+            <button onclick="toggleHourFilter(${{activeHourFilter}})" class="hover:text-white font-bold text-slate-400">&times;</button>
+          `;
+        }} else {{
+          filterPill.classList.add("hidden");
+        }}
+      }}
 
       if (filtered.length === 0) {{
         container.innerHTML = '<div class="p-6 text-center text-xs text-slate-500">No matching activity records found.</div>';
