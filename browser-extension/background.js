@@ -263,6 +263,17 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!tab.active) return; // Only care about active tabs
 
+  // If active tab stopped playing audio while the system is idle, end session
+  if (changeInfo.audible === false && currentSession && currentSession.tabId === tabId) {
+    if (chrome.idle) {
+      chrome.idle.queryState(300, async (idleState) => {
+        if (idleState === 'idle' || idleState === 'locked') {
+          await endCurrentSession();
+        }
+      });
+    }
+  }
+
   try {
     const win = await chrome.windows.get(tab.windowId);
     if (!win || !win.focused) return;
@@ -299,12 +310,24 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   }
 });
 
-// Idle detection: stop tracking if zero user activity for 5 minutes (300 seconds)
+// Idle detection: stop tracking if zero user activity for 5 minutes (300 seconds), unless audio/video is playing
 if (chrome.idle) {
   chrome.idle.setDetectionInterval(300);
   chrome.idle.onStateChanged.addListener(async (newState) => {
-    if (newState === 'idle' || newState === 'locked') {
-      // Inactive for 5 minutes -> end current session
+    if (newState === 'locked') {
+      // Screen locked -> immediately end session
+      await endCurrentSession();
+    } else if (newState === 'idle') {
+      // Inactive for 5 minutes -> check if active tab is currently playing audio (e.g. video / music)
+      if (currentSession) {
+        try {
+          const tab = await chrome.tabs.get(currentSession.tabId);
+          if (tab && tab.audible) {
+            // Active tab is playing video/audio; stay active
+            return;
+          }
+        } catch (e) {}
+      }
       await endCurrentSession();
     } else if (newState === 'active') {
       // User resumed activity -> start tracking active tab if window focused
@@ -313,7 +336,9 @@ if (chrome.idle) {
         if (win && win.focused) {
           const tabs = await chrome.tabs.query({ active: true, windowId: win.id });
           if (tabs.length > 0) {
-            await startSession(tabs[0], win.id);
+            if (!currentSession || currentSession.tabId !== tabs[0].id) {
+              await startSession(tabs[0], win.id);
+            }
           }
         }
       } catch (e) {}
