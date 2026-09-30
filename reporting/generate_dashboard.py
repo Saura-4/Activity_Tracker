@@ -16,6 +16,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Dict, Any, List
+from datetime import datetime
 
 def format_duration(seconds: float) -> str:
     s = int(seconds)
@@ -551,8 +552,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     }}
 
     function renderCalendarHeatmap() {{
-      const allDates = Object.keys(REPORTS_DATABASE).concat(Object.keys(ANALYSES_DATABASE));
-      let maxDateStr = "2026-09-30";
+      const localToday = new Date().toLocaleDateString('en-CA');
+      const allDates = Object.keys(REPORTS_DATABASE).concat(Object.keys(ANALYSES_DATABASE)).concat([localToday]);
+      let maxDateStr = localToday;
       if (allDates.length > 0) {{
         allDates.sort();
         maxDateStr = allDates[allDates.length - 1];
@@ -708,7 +710,8 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const container = document.getElementById("date-buttons-container");
       container.innerHTML = "";
       
-      const allDatesSet = new Set([...Object.keys(REPORTS_DATABASE), ...Object.keys(ANALYSES_DATABASE)]);
+      const localToday = new Date().toLocaleDateString('en-CA');
+      const allDatesSet = new Set([...Object.keys(REPORTS_DATABASE), ...Object.keys(ANALYSES_DATABASE), localToday]);
       const dates = Array.from(allDatesSet).sort().reverse();
       
       dates.forEach(d => {{
@@ -716,11 +719,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const isActive = d === currentDate;
         const hasReport = !!REPORTS_DATABASE[d];
         const hasMd = !!ANALYSES_DATABASE[d];
+        const isToday = d === localToday;
 
         let extraDot = hasMd ? ' <span class="inline-block w-1.5 h-1.5 rounded-full bg-sky-400 mb-0.5"></span>' : '';
+        let todayBadge = isToday ? ' <span class="text-[9px] uppercase px-1 py-0.2 rounded bg-sky-500/20 text-sky-400 font-sans font-bold">Today</span>' : '';
 
         btn.className = `px-2.5 py-1 rounded-md transition text-xs font-mono ${{isActive ? 'bg-[#222222] text-white font-medium border border-[#333333]' : 'text-neutral-400 hover:text-white'}}`;
-        btn.innerHTML = `${{d}}${{extraDot}}`;
+        btn.innerHTML = `${{d}}${{todayBadge}}${{extraDot}}`;
         btn.onclick = () => {{
           currentDate = d;
           activeHourFilter = null;
@@ -1655,23 +1660,32 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const btn = document.getElementById("btn-generate-report");
       const text = document.getElementById("btn-generate-report-text");
       const orig = text.textContent;
+      const localToday = new Date().toLocaleDateString('en-CA');
+      const targetDate = currentDate || localToday;
+
       try {{
         btn.disabled = true;
         text.textContent = "Generating...";
         const resp = await fetch("http://127.0.0.1:8765/api/generate-report", {{
           method: "POST",
           headers: {{ "Content-Type": "application/json" }},
-          body: JSON.stringify({{ date: currentDate }})
+          body: JSON.stringify({{ date: targetDate, today: localToday }})
         }});
         const res = await resp.json();
         if (resp.ok && res.status === "ok") {{
-          showToast(`Report updated for ${{res.date}}!`);
+          showToast(res.message || `Report updated for ${{res.date}}!`);
           if (res.report && res.report.date) {{
             REPORTS_DATABASE[res.report.date] = res.report;
-            renderAll();
-            initDateButtons();
-            renderCalendarHeatmap();
           }}
+          if (res.today_report && res.today_report.date) {{
+            REPORTS_DATABASE[res.today_report.date] = res.today_report;
+          }}
+          if (targetDate === localToday || !REPORTS_DATABASE[currentDate]) {{
+            currentDate = res.report?.date || localToday;
+          }}
+          renderAll();
+          initDateButtons();
+          renderCalendarHeatmap();
         }} else {{
           showToast(res.message || "Report generation failed", true);
         }}
@@ -1683,7 +1697,11 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       }}
     }}
 
-    // Initialization
+    // Initialization: default to today if present in reports, or newest date
+    const localToday = new Date().toLocaleDateString('en-CA');
+    if (REPORTS_DATABASE[localToday]) {{
+      currentDate = localToday;
+    }}
     initDateButtons();
     renderAll();
     renderCalendarHeatmap();
@@ -1751,12 +1769,25 @@ def generate_dashboard_files(data_dir_str: str = "Record", output_str: str = "Re
         except Exception as e:
             print(f"Warning: Failed to load analysis {f.name}: {e}", file=sys.stderr)
 
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    if today_str not in reports_data:
+        try:
+            from collector.config import get_config
+            from reporting.generate_report import generate_single_day_report, write_report
+            cfg = get_config()
+            today_report = generate_single_day_report(cfg, today_str)
+            write_report(cfg, today_report, f"{today_str}.json")
+            reports_data[today_str] = today_report
+            print(f"Auto-created new day report file for: {today_str}")
+        except Exception as e:
+            print(f"Notice: Could not auto-generate new day report for {today_str}: {e}", file=sys.stderr)
+
     all_dates = sorted(set(list(reports_data.keys()) + list(analyses_data.keys())))
     if not all_dates:
         print("No reports or analysis files found.", file=sys.stderr)
         return False
 
-    latest_date = all_dates[-1]
+    latest_date = today_str if today_str in reports_data else all_dates[-1]
     dashboard_html = build_dashboard_html(reports_data, analyses_data, latest_date)
 
     out_path = Path(output_str)

@@ -102,11 +102,17 @@ async def handle_sync_mobile(request):
         # Run ADB sync in thread pool to prevent blocking aiohttp event loop
         sync_res = await asyncio.to_thread(sync_mobile_activity, target_date=target_date)
 
-        # Auto-regenerate report for that date
-        actual_date = target_date or datetime.now().strftime("%Y-%m-%d")
+        # Auto-regenerate report for that date and today
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        actual_date = target_date or today_date
         report = await asyncio.to_thread(generate_single_day_report, config, actual_date)
         await asyncio.to_thread(write_report, config, report, f"{actual_date}.json")
         
+        today_report = None
+        if actual_date != today_date:
+            today_report = await asyncio.to_thread(generate_single_day_report, config, today_date)
+            await asyncio.to_thread(write_report, config, today_report, f"{today_date}.json")
+
         # Regenerate dashboard HTML
         await asyncio.to_thread(generate_dashboard_files, config.data_directory)
 
@@ -114,7 +120,8 @@ async def handle_sync_mobile(request):
             "status": "ok",
             "message": f"Mobile synced: {sync_res.get('total_sessions', 0)} sessions",
             "sync_result": sync_res,
-            "report": report
+            "report": report,
+            "today_report": today_report
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"Error in handle_sync_mobile: {e}")
@@ -141,16 +148,29 @@ async def handle_generate_report(request):
         from reporting.generate_report import generate_single_day_report, write_report
         from reporting.generate_dashboard import generate_dashboard_files
 
-        target_date = data.get("date") or datetime.now().strftime("%Y-%m-%d")
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        target_date = data.get("date") or today_date
+        if target_date == "today":
+            target_date = today_date
+
         report = await asyncio.to_thread(generate_single_day_report, config, target_date)
         await asyncio.to_thread(write_report, config, report, f"{target_date}.json")
+
+        today_report = None
+        # On a new day, if user generated an older day, also ensure today's file is automatically created
+        if target_date != today_date:
+            today_report = await asyncio.to_thread(generate_single_day_report, config, today_date)
+            await asyncio.to_thread(write_report, config, today_report, f"{today_date}.json")
+
         await asyncio.to_thread(generate_dashboard_files, config.data_directory)
 
         return web.json_response({
             "status": "ok",
-            "message": f"Report generated for {target_date}",
+            "message": f"Report generated for {target_date}" + (f" and {today_date}" if today_report else ""),
             "date": target_date,
-            "report": report
+            "today": today_date,
+            "report": report,
+            "today_report": today_report
         }, headers=cors_headers())
     except Exception as e:
         logger.error(f"Error in handle_generate_report: {e}")

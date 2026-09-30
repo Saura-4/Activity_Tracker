@@ -974,6 +974,13 @@ def main():
     write_report(config, report, filename)
     print_summary(report)
 
+    # Automatically regenerate dashboard HTML so the new report is immediately visualised
+    try:
+        from reporting.generate_dashboard import generate_dashboard_files
+        generate_dashboard_files(config.data_directory)
+    except Exception as e:
+        print(f"Notice: Could not automatically update dashboard: {e}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()
