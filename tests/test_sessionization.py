@@ -835,3 +835,55 @@ class TestMobileSessionization:
         assert report["apps"][0]["duration_seconds"] == 1200.0
 
 
+# =============================================================================
+# Desktop Application & 4-Source Tests
+# =============================================================================
+class TestDesktopSessionization:
+    def test_desktop_session_merge(self):
+        """Consecutive events of same desktop app within 30s merge without adding gap."""
+        from tests.conftest import make_desktop_event
+        events = [
+            make_desktop_event(ts(14, 0, 0), ts(14, 15, 0), "Antigravity", "AW - Antigravity"),
+            make_desktop_event(ts(14, 15, 10), ts(14, 30, 0), "Antigravity", "AW - Antigravity"),  # 10s gap
+        ]
+
+        report = aggregate_events(events, merge_gap_seconds=30.0)
+
+        assert report["summary"]["session_count"] == 1
+        assert report["summary"]["total_active_seconds"] == 1790.0  # 900s + 890s (gap not added)
+        assert report["summary"]["desktop_seconds"] == 1790.0
+        assert len(report["desktop_apps"]) == 1
+        assert report["desktop_apps"][0]["app"] == "Antigravity"
+        assert report["desktop_apps"][0]["duration_seconds"] == 1790.0
+
+    def test_complete_4source_unification(self):
+        """Report seamlessly unifies all 4 sources: browser, vscode, desktop, and mobile."""
+        from tests.conftest import make_mobile_event, make_desktop_event
+        events = [
+            make_browser_event(ts(10, 0, 0), ts(10, 30, 0), "github.com", "GitHub"),
+            make_vscode_event(ts(10, 30, 0), ts(11, 0, 0), "activity-tracker", "main.py", "python"),
+            make_desktop_event(ts(11, 0, 0), ts(11, 45, 0), "Antigravity", "activity-tracker"),
+            make_mobile_event(ts(11, 45, 0), ts(12, 0, 0), "WhatsApp", "com.whatsapp"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["session_count"] == 4
+        assert report["summary"]["context_switches"] == 3
+        assert report["summary"]["browser_seconds"] == 1800.0
+        assert report["summary"]["vscode_seconds"] == 1800.0
+        assert report["summary"]["desktop_seconds"] == 2700.0
+        assert report["summary"]["mobile_seconds"] == 900.0
+        assert report["summary"]["total_active_seconds"] == 7200.0  # exactly 2 hours total
+
+        # Contexts are clean
+        assert report["timeline"][2]["source"] == "desktop"
+        assert report["timeline"][2]["context"] == {"app": "Antigravity", "title": "activity-tracker"}
+
+        # Desktop apps breakdown
+        assert len(report["desktop_apps"]) == 1
+        assert report["desktop_apps"][0]["app"] == "Antigravity"
+        assert report["desktop_apps"][0]["duration_seconds"] == 2700.0
+
+
+

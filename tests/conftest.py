@@ -142,6 +142,34 @@ def make_mobile_event(
     }
 
 
+def make_desktop_event(
+    start: str,
+    end: str,
+    app: str,
+    title: str,
+    event_id: str = None
+) -> dict:
+    """Create a desktop app activity event dict."""
+    if not event_id:
+        event_id = str(uuid.uuid4())
+
+    start_dt = datetime.fromisoformat(start.replace('Z', '+00:00'))
+    end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
+    duration = (end_dt - start_dt).total_seconds()
+
+    return {
+        "id": event_id,
+        "start": start,
+        "end": end,
+        "duration_seconds": duration,
+        "source": "desktop",
+        "context": {
+            "app": app,
+            "title": title
+        }
+    }
+
+
 def write_events_to_jsonl(filepath: str, events: list):
     """Write a list of event dicts to a JSONL file."""
     with open(filepath, "w", encoding="utf-8") as f:

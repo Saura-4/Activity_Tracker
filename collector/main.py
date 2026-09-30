@@ -42,6 +42,10 @@ async def process_single_event(data):
             ctx_info = event.context.get("domain", "")
         elif event.source == "vscode":
             ctx_info = event.context.get("workspace", "")
+        elif event.source == "mobile":
+            ctx_info = event.context.get("app", "")
+        elif event.source == "desktop":
+            ctx_info = f"{event.context.get('app', '')} - {event.context.get('title', '')[:35]}"
         logger.info(f"Event: {event.source} | {ctx_info}")
         
     return {"status": "ok", "id": event.id}
@@ -93,6 +97,21 @@ def main():
     logger.info(f"Starting collector on {config.collector_host}:{config.collector_port}")
     logger.info(f"Data directory: {config.data_directory}")
     
+    # Start desktop window watcher background thread if on Windows
+    if sys.platform == "win32":
+        try:
+            import threading
+            from collector.desktop_watcher import DesktopWatcher
+            watcher = DesktopWatcher(
+                collector_url=f"http://{config.collector_host}:{config.collector_port}",
+                data_directory=config.data_directory
+            )
+            watcher_thread = threading.Thread(target=watcher.start, daemon=True)
+            watcher_thread.start()
+            logger.info("Desktop application watcher thread started")
+        except Exception as e:
+            logger.warning(f"Could not start desktop watcher: {e}")
+
     try:
         web.run_app(app, host=config.collector_host, port=config.collector_port)
     except KeyboardInterrupt:
