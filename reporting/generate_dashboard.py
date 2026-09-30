@@ -1071,11 +1071,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const col = document.createElement("div");
         col.className = `flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer select-none transition-all p-0.5 rounded-lg ${{isSelected ? 'bg-sky-500/10 ring-2 ring-sky-400 ring-offset-1 ring-offset-[#090d16]' : 'hover:bg-[#161b22]'}}`;
         
-        const topActs = (item.sortedActivities || []).slice(0, 2);
+        const topActs = (item.sortedActivities || []).filter(a => a.durationSeconds >= 60).slice(0, 2);
         let topActsHtml = "";
         if (topActs.length > 0) {{
           topActsHtml = topActs.map(a => `<div class="truncate text-[10px] text-slate-300">• ${{escapeHtml(a.title.substring(0, 28))}}: <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong></div>`).join("");
-        }} else if (total === 0) {{
+        }} else if (total > 0) {{
+          topActsHtml = `<div class="text-[10px] text-slate-400">Brief interactions &lt; 1m (${{formatSecs(total)}})</div>`;
+        }} else {{
           topActsHtml = `<div class="text-[10px] text-slate-500">No activity (Sleep / Idle)</div>`;
         }}
 
@@ -1112,7 +1114,8 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const h = selectedHour !== null ? selectedHour : 0;
       const bucket = data.buckets[h] || {{ hour: h, totalSeconds: 0, sortedActivities: [] }};
       const totalSec = bucket.displayActiveSeconds || bucket.totalSeconds || 0;
-      const acts = bucket.sortedActivities || [];
+      const acts = (bucket.sortedActivities || []).filter(a => a.durationSeconds >= 60);
+      const minorCount = (bucket.sortedActivities || []).filter(a => a.durationSeconds < 60).length;
       const pctOfHour = Math.min(100, Math.round((totalSec / 3600) * 100));
       const isFiltered = activeHourFilter === h;
 
@@ -1131,7 +1134,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
               </span>
             </div>
             <div class="text-xs text-slate-400 mt-0.5 font-mono">
-              ${{acts.length > 0 ? `${{acts.length}} distinct activities &bull; ${{acts.reduce((acc, a) => acc + a.sessionCount, 0)}} sessions` : 'Idle span / Sleep'}}
+              ${{acts.length > 0 ? `${{acts.length}} activities &ge; 1 min` + (minorCount > 0 ? ` &bull; ${{minorCount}} brief under 1m` : '') : (totalSec > 0 ? 'Only brief interactions &lt; 1 min' : 'Idle span / Sleep')}}
             </div>
           </div>
         </div>
@@ -1153,13 +1156,20 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       `;
       container.appendChild(header);
 
-      if (acts.length === 0 || totalSec === 0) {{
+      if (acts.length === 0) {{
         const empty = document.createElement("div");
         empty.className = "py-8 text-center text-xs text-slate-500 space-y-1 font-mono";
-        empty.innerHTML = `
-          <div>No active screen sessions logged between ${{String(h).padStart(2, "0")}}:00 and ${{String(h + 1).padStart(2, "0")}}:00</div>
-          <div class="text-[11px] text-slate-600">Computer was idle, locked, or sleeping.</div>
-        `;
+        if (totalSec > 0) {{
+          empty.innerHTML = `
+            <div>Only brief interactions (&lt; 1 min) logged during ${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00 (${{formatSecs(totalSec)}} total)</div>
+            <div class="text-[11px] text-slate-600">Events under 1 minute are hidden from this hourly view.</div>
+          `;
+        }} else {{
+          empty.innerHTML = `
+            <div>No active screen sessions logged between ${{String(h).padStart(2, "0")}}:00 and ${{String(h + 1).padStart(2, "0")}}:00</div>
+            <div class="text-[11px] text-slate-600">Computer was idle, locked, or sleeping.</div>
+          `;
+        }}
         container.appendChild(empty);
         return;
       }}
@@ -1248,8 +1258,8 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           setHourlyViewMode('inspector');
         }};
 
-        const acts = (b.sortedActivities || []).slice(0, 3);
-        const actChips = acts.map(a => {{
+        const acts = (b.sortedActivities || []).filter(a => a.durationSeconds >= 60).slice(0, 3);
+        let actChips = acts.map(a => {{
           let col = "text-sky-400 bg-sky-500/10 border-sky-500/20";
           if (a.source === "mobile") col = "text-purple-400 bg-purple-500/10 border-purple-500/20";
           else if (a.source === "desktop") col = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
@@ -1259,6 +1269,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
             <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong>
           </span>`;
         }}).join(" ");
+
+        if (!actChips) {{
+          actChips = `<span class="text-[11px] text-slate-500 font-mono italic">Brief interactions (&lt; 1 min)</span>`;
+        }}
 
         const pctOfHour = Math.min(100, Math.round((total / 3600) * 100));
 
@@ -1271,7 +1285,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
               <span class="text-xs text-slate-300 font-mono font-semibold">${{formatSecs(total)}} active</span>
               <span class="text-[11px] text-slate-500 font-mono">(${{pctOfHour}}%)</span>
             </div>
-            <span class="text-[11px] font-mono text-slate-500">${{b.sortedActivities.length}} activities &rarr;</span>
+            <span class="text-[11px] font-mono text-slate-500">${{acts.length}} activities &rarr;</span>
           </div>
           <div class="flex flex-wrap gap-1.5 pt-0.5">
             ${{actChips}}
