@@ -41,13 +41,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
   <style>
     :root {{
-      --background: #090d16;
-      --card: #0d1117;
-      --card-hover: #161b22;
-      --border: #21262d;
-      --border-subtle: #1b2128;
-      --foreground: #f0f6fc;
-      --muted-foreground: #8b949e;
+      --background: #000000;
+      --card: #080808;
+      --card-hover: #121212;
+      --border: #1a1a1a;
+      --border-subtle: #141414;
+      --foreground: #ededed;
+      --muted-foreground: #737373;
       --primary: #38bdf8;
       --primary-foreground: #0284c7;
     }}
@@ -57,20 +57,22 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }}
     .custom-scroll::-webkit-scrollbar {{
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
     }}
     .custom-scroll::-webkit-scrollbar-track {{
-      background: rgba(30, 41, 59, 0.4);
-      border-radius: 4px;
+      background: #000000;
     }}
     .custom-scroll::-webkit-scrollbar-thumb {{
-      background: #21262d;
-      border-radius: 4px;
+      background: #222222;
+      border-radius: 3px;
+    }}
+    .custom-scroll::-webkit-scrollbar-thumb:hover {{
+      background: #333333;
     }}
   </style>
 </head>
-<body class="antialiased p-4 sm:p-6 lg:p-8 selection:bg-sky-500/20 selection:text-sky-300">
+<body class="antialiased p-4 sm:p-6 lg:p-8 bg-black text-[#ededed] selection:bg-neutral-800 selection:text-white">
   <div class="max-w-7xl mx-auto space-y-5">
 
     <!-- Top Navigation & Controls Bar -->
@@ -79,29 +81,29 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         <div class="w-7 h-7 rounded-md bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
         </div>
-        <h1 class="text-base font-semibold tracking-tight text-[var(--foreground)]">Activity Tracker</h1>
+        <h1 class="text-base font-semibold tracking-tight text-white">Activity Tracker</h1>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
         <!-- Date Switcher Buttons -->
-        <div id="date-buttons-container" class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs">
+        <div id="date-buttons-container" class="inline-flex p-0.5 bg-[#000000] rounded-lg border border-[var(--border)] text-xs">
           <!-- Populated by JS -->
         </div>
 
         <!-- Sync Mobile & Generate Report Actions -->
-        <button id="btn-sync-mobile" onclick="triggerSyncMobile()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition disabled:opacity-50">
+        <button id="btn-sync-mobile" onclick="triggerSyncMobile()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[var(--border)] transition disabled:opacity-50">
           <svg class="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
           <span id="btn-sync-mobile-text">Sync Mobile</span>
         </button>
 
-        <button id="btn-generate-report" onclick="triggerGenerateReport()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition disabled:opacity-50">
+        <button id="btn-generate-report" onclick="triggerGenerateReport()" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[var(--border)] transition disabled:opacity-50">
           <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
           <span id="btn-generate-report-text">Generate Report</span>
         </button>
 
         <!-- Custom JSON loader -->
-        <label class="cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition">
-          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+        <label class="cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[var(--border)] transition">
+          <svg class="w-3.5 h-3.5 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
           Import
           <input type="file" id="file-input" accept=".json,.md" class="hidden">
         </label>
@@ -110,13 +112,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
     <!-- View Mode Selector Tabs -->
     <div class="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
-      <div class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs font-medium" id="main-view-tabs">
-        <button data-tab="split" class="tab-btn px-3 py-1 rounded-md bg-[#21262d] text-white transition">Dashboard & Journal</button>
-        <button data-tab="analytics" class="tab-btn px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 transition">Analytics</button>
-        <button data-tab="journal" class="tab-btn px-3 py-1 rounded-md text-slate-400 hover:text-slate-200 transition">Journal</button>
+      <div class="inline-flex p-0.5 bg-[#000000] rounded-lg border border-[var(--border)] text-xs font-medium" id="main-view-tabs">
+        <button data-tab="split" class="tab-btn px-3 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition">Dashboard & Journal</button>
+        <button data-tab="analytics" class="tab-btn px-3 py-1 rounded-md text-neutral-400 hover:text-white transition">Analytics</button>
+        <button data-tab="journal" class="tab-btn px-3 py-1 rounded-md text-neutral-400 hover:text-white transition">Journal</button>
       </div>
 
-      <div id="has-analysis-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs text-slate-400">
+      <div id="has-analysis-badge" class="hidden sm:inline-flex items-center gap-1.5 text-xs text-neutral-400">
         <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Analysis note attached
       </div>
     </div>
@@ -126,16 +128,16 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[var(--border)]">
         <div class="flex items-center gap-2">
           <h2 class="text-sm font-semibold text-[var(--foreground)]">Activity Calendar</h2>
-          <span id="calendar-summary-badge" class="text-xs font-mono text-slate-400"></span>
+          <span id="calendar-summary-badge" class="text-xs font-mono text-neutral-400"></span>
         </div>
 
         <div class="flex items-center gap-3">
-          <div id="calendar-hover-info" class="text-xs font-mono text-slate-400">Selected: --</div>
+          <div id="calendar-hover-info" class="text-xs font-mono text-neutral-400">Selected: --</div>
 
           <!-- Color Scale Legend -->
-          <div class="flex items-center gap-1 text-[10px] text-slate-400">
+          <div class="flex items-center gap-1 text-[10px] text-neutral-400">
             <span>Less</span>
-            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#161b22] border border-[#272d37]" title="No activity"></span>
+            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#121212] border border-[#1e1e1e]" title="No activity"></span>
             <span class="w-2.5 h-2.5 rounded-[2px] bg-[#0e4429] border border-[#14532d]" title="< 2h"></span>
             <span class="w-2.5 h-2.5 rounded-[2px] bg-[#006d32] border border-[#166534]" title="2h - 4h"></span>
             <span class="w-2.5 h-2.5 rounded-[2px] bg-[#26a641] border border-[#22c55e]" title="4h - 6h"></span>
@@ -149,7 +151,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div id="calendar-scroll-container" class="overflow-x-auto custom-scroll pb-2 pt-1">
         <div class="inline-flex gap-2 min-w-full">
           <!-- Weekday Labels Column -->
-          <div class="flex flex-col text-[10px] text-slate-400 font-mono select-none pt-[18px] shrink-0" style="gap: 3px;">
+          <div class="flex flex-col text-[10px] text-neutral-500 font-mono select-none pt-[18px] shrink-0" style="gap: 3px;">
             <div class="h-[12px] flex items-center pr-1"></div>
             <div class="h-[12px] flex items-center pr-1">Mon</div>
             <div class="h-[12px] flex items-center pr-1"></div>
@@ -162,7 +164,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           <!-- Month labels + 7-row block matrix -->
           <div class="flex flex-col gap-1.5">
             <!-- Months Header Row -->
-            <div id="calendar-months-row" class="h-4 relative text-[10px] text-slate-400 font-mono select-none">
+            <div id="calendar-months-row" class="h-4 relative text-[10px] text-neutral-500 font-mono select-none">
               <!-- Rendered via JS -->
             </div>
 
@@ -177,25 +179,25 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
     <!-- KPI Metric Cards Grid -->
     <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-[#388bfd]/50">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-[#333333]">
         <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Active Screen Time</div>
-        <div id="metric-total-active" class="text-2xl font-bold text-[var(--foreground)] mt-1.5 font-mono">--</div>
+        <div id="metric-total-active" class="text-2xl font-bold text-white mt-1.5 font-mono">--</div>
         <div id="metric-observed-span" class="text-xs text-[var(--muted-foreground)] mt-1">Observed span: --</div>
       </div>
 
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-indigo-500/50">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-indigo-500/40">
         <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Deep Focus Time</div>
         <div id="metric-work-time" class="text-2xl font-bold text-indigo-400 mt-1.5 font-mono">--</div>
         <div id="metric-work-pct" class="text-xs text-[var(--muted-foreground)] mt-1">Coding & AI research</div>
       </div>
 
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-amber-500/50">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-amber-500/40">
         <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Context Switches</div>
         <div id="metric-switches" class="text-2xl font-bold text-amber-400 mt-1.5 font-mono">--</div>
         <div id="metric-switch-rate" class="text-xs text-[var(--muted-foreground)] mt-1">Across apps & windows</div>
       </div>
 
-      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-emerald-500/50">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition hover:border-emerald-500/40">
         <div class="text-[11px] font-medium uppercase tracking-wider text-[var(--muted-foreground)]">Longest Focus Block</div>
         <div id="metric-longest-session" class="text-2xl font-bold text-emerald-400 mt-1.5 font-mono">--</div>
         <div id="metric-longest-name" class="text-xs text-[var(--muted-foreground)] mt-1 truncate">--</div>
@@ -207,13 +209,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-2.5 border-b border-[var(--border)] gap-2">
         <div class="flex items-center gap-2">
           <h2 class="text-sm font-semibold text-[var(--foreground)]" id="journal-heading">Daily Journal</h2>
-          <span class="text-xs text-slate-500 font-mono" id="journal-filepath">Record/analysis/...</span>
+          <span class="text-xs text-neutral-500 font-mono" id="journal-filepath">Record/analysis/...</span>
         </div>
-        <div class="text-xs text-slate-400 font-mono" id="journal-date-tag">Date: --</div>
+        <div class="text-xs text-neutral-400 font-mono" id="journal-date-tag">Date: --</div>
       </div>
 
       <!-- Rendered Markdown Body -->
-      <div id="journal-content-container" class="prose prose-invert max-w-none text-slate-300 text-xs leading-relaxed">
+      <div id="journal-content-container" class="prose prose-invert max-w-none text-neutral-300 text-xs leading-relaxed">
         <!-- Rendered markdown goes here -->
       </div>
     </section>
@@ -222,47 +224,47 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     <section id="analytics-split-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3">
       <div class="flex items-center justify-between">
         <h2 class="text-sm font-semibold text-[var(--foreground)]">Device Breakdown</h2>
-        <div id="device-ratio-badge" class="text-xs font-mono px-2 py-0.5 bg-[#090d16] rounded text-slate-400 border border-[var(--border)]">
+        <div id="device-ratio-badge" class="text-xs font-mono px-2 py-0.5 bg-[#000000] rounded text-neutral-400 border border-[var(--border)]">
           Ratio: --
         </div>
       </div>
 
       <!-- Segmented Bar -->
-      <div id="source-split-bar" class="w-full h-3 rounded-full overflow-hidden flex bg-[#090d16] border border-[var(--border)]">
+      <div id="source-split-bar" class="w-full h-3 rounded-full overflow-hidden flex bg-[#000000] border border-[var(--border)]">
         <!-- Dynamic segments -->
       </div>
 
       <!-- Source Badges Legend -->
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1 text-xs">
-        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#000000] border border-[var(--border)]">
           <span class="w-2.5 h-2.5 rounded-sm bg-sky-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-medium text-slate-300 text-xs">Browser</div>
-            <div id="source-stat-browser" class="text-slate-500 font-mono text-[11px]">--</div>
+            <div class="font-medium text-neutral-200 text-xs">Browser</div>
+            <div id="source-stat-browser" class="text-neutral-500 font-mono text-[11px]">--</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#000000] border border-[var(--border)]">
           <span class="w-2.5 h-2.5 rounded-sm bg-purple-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-medium text-slate-300 text-xs">Mobile</div>
-            <div id="source-stat-mobile" class="text-slate-500 font-mono text-[11px]">--</div>
+            <div class="font-medium text-neutral-200 text-xs">Mobile</div>
+            <div id="source-stat-mobile" class="text-neutral-500 font-mono text-[11px]">--</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#000000] border border-[var(--border)]">
           <span class="w-2.5 h-2.5 rounded-sm bg-emerald-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-medium text-slate-300 text-xs">Desktop</div>
-            <div id="source-stat-desktop" class="text-slate-500 font-mono text-[11px]">--</div>
+            <div class="font-medium text-neutral-200 text-xs">Desktop</div>
+            <div id="source-stat-desktop" class="text-neutral-500 font-mono text-[11px]">--</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#090d16]/60 border border-[var(--border)]">
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-[#000000] border border-[var(--border)]">
           <span class="w-2.5 h-2.5 rounded-sm bg-amber-400 shrink-0"></span>
           <div class="min-w-0">
-            <div class="font-medium text-slate-300 text-xs">VS Code</div>
-            <div id="source-stat-vscode" class="text-slate-500 font-mono text-[11px]">--</div>
+            <div class="font-medium text-neutral-200 text-xs">VS Code</div>
+            <div id="source-stat-vscode" class="text-neutral-500 font-mono text-[11px]">--</div>
           </div>
         </div>
       </div>
@@ -274,23 +276,23 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         <div>
           <div class="flex items-center gap-2">
             <h2 class="text-sm font-semibold text-[var(--foreground)]">Hourly Activity Explorer</h2>
-            <span id="hourly-summary-badge" class="text-xs font-mono text-slate-400"></span>
+            <span id="hourly-summary-badge" class="text-xs font-mono text-neutral-400"></span>
           </div>
           <p class="text-xs text-[var(--muted-foreground)] mt-0.5">Inspect what you were doing and for how long during each hour</p>
         </div>
 
         <!-- Mode Toggle Controls -->
         <div class="flex items-center gap-2">
-          <div class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs font-medium" id="hourly-mode-toggle">
-            <button id="btn-mode-inspector" onclick="setHourlyViewMode('inspector')" class="px-2.5 py-1 rounded-md bg-[#21262d] text-white transition">Hour Inspector</button>
-            <button id="btn-mode-schedule" onclick="setHourlyViewMode('schedule')" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition">24h Schedule</button>
+          <div class="inline-flex p-0.5 bg-[#000000] rounded-lg border border-[var(--border)] text-xs font-medium" id="hourly-mode-toggle">
+            <button id="btn-mode-inspector" onclick="setHourlyViewMode('inspector')" class="px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition">Hour Inspector</button>
+            <button id="btn-mode-schedule" onclick="setHourlyViewMode('schedule')" class="px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition">24h Schedule</button>
           </div>
         </div>
       </div>
 
       <!-- 24-Hour Interactive Rhythm Bar Strip -->
       <div class="space-y-1.5">
-        <div class="flex items-center justify-between text-[11px] text-slate-400 px-1">
+        <div class="flex items-center justify-between text-[11px] text-neutral-400 px-1">
           <span class="font-mono">Select an hour below to inspect:</span>
           <div class="flex items-center gap-3">
             <span class="inline-flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-sky-400"></span> Browser</span>
@@ -300,11 +302,11 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           </div>
         </div>
 
-        <div id="hourly-bars-container" class="h-44 flex items-end gap-1 sm:gap-1.5 pt-6 pb-2 bg-[#090d16] border border-[var(--border)] rounded-xl px-2 sm:px-3 overflow-x-auto custom-scroll">
+        <div id="hourly-bars-container" class="h-44 flex items-end gap-1 sm:gap-1.5 pt-6 pb-2 bg-[#000000] border border-[var(--border)] rounded-xl px-2 sm:px-3 overflow-x-auto custom-scroll">
           <!-- 24 interactive hourly bars injected by JS -->
         </div>
 
-        <div class="flex justify-between text-[10px] font-mono text-slate-500 px-2">
+        <div class="flex justify-between text-[10px] font-mono text-neutral-500 px-2">
           <span>00:00 (Night)</span>
           <span>06:00 (Morning)</span>
           <span>12:00 (Noon)</span>
@@ -314,12 +316,12 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </div>
 
       <!-- Selected Hour Inspector Card -->
-      <div id="hourly-inspector-container" class="bg-[#090d16] border border-[var(--border)] rounded-xl p-4 space-y-3">
+      <div id="hourly-inspector-container" class="bg-[#000000] border border-[var(--border)] rounded-xl p-4 space-y-3">
         <!-- Injected by renderHourlyInspector() -->
       </div>
 
       <!-- Chronological 24h Schedule Feed (Toggleable) -->
-      <div id="hourly-schedule-container" class="hidden bg-[#090d16] border border-[var(--border)] rounded-xl p-4 space-y-2.5">
+      <div id="hourly-schedule-container" class="hidden bg-[#000000] border border-[var(--border)] rounded-xl p-4 space-y-2.5">
         <!-- Injected by renderHourlySchedule() -->
       </div>
     </section>
@@ -331,7 +333,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-[var(--foreground)]">Longest Sessions</h2>
-          <span id="longest-count-badge" class="text-xs font-mono text-slate-500">Top 5</span>
+          <span id="longest-count-badge" class="text-xs font-mono text-neutral-500">Top 5</span>
         </div>
         <div id="longest-sessions-list" class="space-y-2 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
@@ -342,7 +344,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-[var(--foreground)]">Websites</h2>
-          <span id="domains-count-badge" class="text-xs font-mono text-slate-500">0 domains</span>
+          <span id="domains-count-badge" class="text-xs font-mono text-neutral-500">0 domains</span>
         </div>
         <div id="domains-list" class="space-y-2.5 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
@@ -353,7 +355,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-[var(--foreground)]">Mobile Apps</h2>
-          <span id="mobile-count-badge" class="text-xs font-mono text-slate-500">0 apps</span>
+          <span id="mobile-count-badge" class="text-xs font-mono text-neutral-500">0 apps</span>
         </div>
         <div id="mobile-apps-list" class="space-y-2.5 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
@@ -364,7 +366,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-sm space-y-3 flex flex-col">
         <div class="flex items-center justify-between">
           <h2 class="text-sm font-semibold text-[var(--foreground)]">Desktop Apps</h2>
-          <span id="desktop-count-badge" class="text-xs font-mono text-slate-500">0 apps</span>
+          <span id="desktop-count-badge" class="text-xs font-mono text-neutral-500">0 apps</span>
         </div>
         <div id="desktop-apps-list" class="space-y-2.5 flex-1 overflow-y-auto max-h-80 pr-1 custom-scroll">
           <!-- Populated by JS -->
@@ -383,23 +385,23 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         <!-- Filter tabs & Search -->
         <div class="flex flex-wrap items-center gap-2">
-          <div id="timeline-filters" class="inline-flex p-0.5 bg-[#090d16] rounded-lg border border-[var(--border)] text-xs font-medium">
-            <button data-filter="all" class="filter-btn px-2.5 py-1 rounded-md bg-[#21262d] text-white transition text-xs">All</button>
-            <button data-filter="browser" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">Browser</button>
-            <button data-filter="mobile" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">Mobile</button>
-            <button data-filter="desktop" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">Desktop</button>
-            <button data-filter="vscode" class="filter-btn px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition text-xs">VS Code</button>
+          <div id="timeline-filters" class="inline-flex p-0.5 bg-[#000000] rounded-lg border border-[var(--border)] text-xs font-medium">
+            <button data-filter="all" class="filter-btn px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition text-xs">All</button>
+            <button data-filter="browser" class="filter-btn px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition text-xs">Browser</button>
+            <button data-filter="mobile" class="filter-btn px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition text-xs">Mobile</button>
+            <button data-filter="desktop" class="filter-btn px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition text-xs">Desktop</button>
+            <button data-filter="vscode" class="filter-btn px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition text-xs">VS Code</button>
           </div>
 
           <div class="relative">
-            <input type="text" id="timeline-search" placeholder="Filter..." class="bg-[#090d16] border border-[var(--border)] rounded-lg px-2.5 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-sky-500/50 w-36 sm:w-48 font-mono">
+            <input type="text" id="timeline-search" placeholder="Filter..." class="bg-[#000000] border border-[var(--border)] rounded-lg px-2.5 py-1 text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-sky-500/60 w-36 sm:w-48 font-mono">
           </div>
         </div>
       </div>
 
       <!-- Ledger Container -->
-      <div class="overflow-hidden border border-[var(--border)] rounded-lg bg-[#090d16]/70">
-        <div class="max-h-[460px] overflow-y-auto custom-scroll divide-y divide-[#21262d]" id="timeline-table-body">
+      <div class="overflow-hidden border border-[var(--border)] rounded-lg bg-[#000000]">
+        <div class="max-h-[460px] overflow-y-auto custom-scroll divide-y divide-[#1a1a1a]" id="timeline-table-body">
           <!-- Session rows injected by JS -->
         </div>
       </div>
@@ -449,9 +451,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       // Bold
       t = t.replace(/\\*\\*(.+?)\\*\\*/g, '<strong class="text-white font-semibold">$1</strong>');
       // Italic
-      t = t.replace(/\\*(.+?)\\*/g, '<em class="italic text-slate-300">$1</em>');
+      t = t.replace(/\\*(.+?)\\*/g, '<em class="italic text-neutral-300">$1</em>');
       // Inline code
-      t = t.replace(/`([^`]+)`/g, '<code class="bg-slate-900 text-sky-300 px-1.5 py-0.5 rounded text-[11px] font-mono border border-slate-800">$1</code>');
+      t = t.replace(/`([^`]+)`/g, '<code class="bg-[#121212] text-neutral-200 px-1.5 py-0.5 rounded text-[11px] font-mono border border-[#222222]">$1</code>');
       // Links
       t = t.replace(/\\[([^\\]]+)\\]\\(([^\\)]+)\\)/g, '<a href="$2" target="_blank" class="text-sky-400 hover:text-sky-300 underline">$1</a>');
       return t;
@@ -464,9 +466,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const mNames = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
         const mmm = (parts[1] && parseInt(parts[1]) > 0 && parseInt(parts[1]) <= 12) ? mNames[parseInt(parts[1]) - 1] : "sep";
         return `
-          <div class="py-8 text-center bg-[#090d16]/40 border border-dashed border-[#21262d] rounded-lg space-y-1.5">
-            <div class="text-xs font-medium text-slate-400">No journal entry for ${{currentDate}}</div>
-            <p class="text-[11px] text-slate-600 font-mono">
+          <div class="py-8 text-center bg-[#050505] border border-dashed border-[#1f1f1f] rounded-lg space-y-1.5">
+            <div class="text-xs font-medium text-neutral-400">No journal entry for ${{currentDate}}</div>
+            <p class="text-[11px] text-neutral-600 font-mono">
               Record/analysis/${{yr}}/${{mmm}}/daily/${{currentDate}}.md
             </p>
           </div>
@@ -484,7 +486,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         if (line.trim().startsWith('```')) {{
           if (inCode) {{
-            html.push('<pre class="bg-slate-950 border border-slate-800 rounded-xl p-4 my-3 text-xs font-mono text-sky-300 overflow-x-auto custom-scroll"><code>' + escapeHtml(codeBuffer.join('\\n')) + '</code></pre>');
+            html.push('<pre class="bg-[#050505] border border-[#1a1a1a] rounded-xl p-4 my-3 text-xs font-mono text-neutral-200 overflow-x-auto custom-scroll"><code>' + escapeHtml(codeBuffer.join('\\n')) + '</code></pre>');
             codeBuffer = [];
             inCode = false;
           }} else {{
@@ -499,7 +501,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         if (line.trim() === '---' || line.trim() === '***') {{
           if (inList) {{ html.push('</ul>'); inList = false; }}
-          html.push('<hr class="border-slate-800 my-5">');
+          html.push('<hr class="border-[#1a1a1a] my-5">');
           continue;
         }}
 
@@ -510,24 +512,24 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         }}
         if (line.startsWith('## ')) {{
           if (inList) {{ html.push('</ul>'); inList = false; }}
-          html.push('<h2 class="text-base sm:text-lg font-bold text-sky-300 tracking-tight mt-5 mb-2.5 flex items-center gap-2 border-b border-slate-800/80 pb-1.5">' + inlineFormat(line.slice(3)) + '</h2>');
+          html.push('<h2 class="text-base sm:text-lg font-bold text-neutral-100 tracking-tight mt-5 mb-2.5 flex items-center gap-2 border-b border-[#1a1a1a] pb-1.5">' + inlineFormat(line.slice(3)) + '</h2>');
           continue;
         }}
         if (line.startsWith('### ')) {{
           if (inList) {{ html.push('</ul>'); inList = false; }}
-          html.push('<h3 class="text-sm font-bold text-indigo-300 tracking-tight mt-4 mb-2">' + inlineFormat(line.slice(4)) + '</h3>');
+          html.push('<h3 class="text-sm font-bold text-neutral-300 tracking-tight mt-4 mb-2">' + inlineFormat(line.slice(4)) + '</h3>');
           continue;
         }}
 
         if (line.startsWith('> ')) {{
           if (inList) {{ html.push('</ul>'); inList = false; }}
-          html.push('<blockquote class="p-3 my-2.5 bg-slate-900/90 border-l-4 border-sky-500 rounded-r-xl text-xs text-slate-300 space-y-1">' + inlineFormat(line.slice(2)) + '</blockquote>');
+          html.push('<blockquote class="p-3 my-2.5 bg-[#0a0a0a] border-l-4 border-neutral-600 rounded-r-xl text-xs text-neutral-300 space-y-1">' + inlineFormat(line.slice(2)) + '</blockquote>');
           continue;
         }}
 
         if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {{
           if (!inList) {{
-            html.push('<ul class="space-y-1.5 my-2 text-xs text-slate-300 list-disc list-inside">');
+            html.push('<ul class="space-y-1.5 my-2 text-xs text-neutral-300 list-disc list-inside">');
             inList = true;
           }}
           html.push('<li class="leading-relaxed">' + inlineFormat(line.trim().slice(2)) + '</li>');
@@ -541,7 +543,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         if (!line.trim()) continue;
 
-        html.push('<p class="text-xs text-slate-300 leading-relaxed mb-2.5">' + inlineFormat(line) + '</p>');
+        html.push('<p class="text-xs text-neutral-300 leading-relaxed mb-2.5">' + inlineFormat(line) + '</p>');
       }}
 
       if (inList) html.push('</ul>');
@@ -596,7 +598,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         if (m !== lastMonth) {{
           lastMonth = m;
           const mLabel = document.createElement("span");
-          mLabel.className = "absolute font-semibold text-slate-400";
+          mLabel.className = "absolute font-semibold text-neutral-400";
           mLabel.style.left = `${{w * 15}}px`;
           mLabel.textContent = mNames[m];
           monthsContainer.appendChild(mLabel);
@@ -618,7 +620,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           block.dataset.date = dateStr;
 
           // Color scale matching GitHub / LeetCode block style
-          let lvlClass = "bg-[#161b22] border-[#272d37]";
+          let lvlClass = "bg-[#101010] border-[#1e1e1e]";
           if (secs > 0) {{
             if (secs < 7200) {{
               lvlClass = "bg-[#0e4429] border-[#14532d]";
@@ -639,7 +641,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           }}
 
           if (isSelected) {{
-            baseClass += " ring-2 ring-sky-400 ring-offset-1 ring-offset-[#090d16] scale-125 z-10 shadow-lg shadow-sky-500/40";
+            baseClass += " ring-2 ring-sky-400 ring-offset-1 ring-offset-black scale-125 z-10 shadow-lg shadow-sky-500/40";
           }}
 
           block.className = baseClass;
@@ -653,9 +655,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
             const infoBox = document.getElementById("calendar-hover-info");
             if (infoBox) {{
               infoBox.innerHTML = `
-                <span class="text-slate-200 font-medium">${{friendlyDay}}</span> &bull; 
-                <span class="${{secs > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-500'}}">${{secs > 0 ? formatSecs(secs) : 'No activity'}}</span>
-                ${{sessionCount > 0 ? `<span class="text-slate-500"> (${{sessionCount}} sessions)</span>` : ''}}
+                <span class="text-neutral-200 font-medium">${{friendlyDay}}</span> &bull; 
+                <span class="${{secs > 0 ? 'text-emerald-400 font-semibold' : 'text-neutral-500'}}">${{secs > 0 ? formatSecs(secs) : 'No activity'}}</span>
+                ${{sessionCount > 0 ? `<span class="text-neutral-500"> (${{sessionCount}} sessions)</span>` : ''}}
                 ${{hasMd ? `<span class="text-sky-400 font-mono text-[10px]"> • note</span>` : ''}}
               `;
             }}
@@ -699,9 +701,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const infoBox = document.getElementById("calendar-hover-info");
       if (infoBox) {{
         infoBox.innerHTML = `
-          <span class="text-slate-500">Selected:</span> 
-          <strong class="text-slate-200">${{friendlyDate}}</strong> &bull; 
-          <span class="${{secs > 0 ? 'text-emerald-400 font-medium' : 'text-slate-500'}}">${{secs > 0 ? formatSecs(secs) : 'No activity recorded'}}</span>
+          <span class="text-neutral-500">Selected:</span> 
+          <strong class="text-neutral-200">${{friendlyDate}}</strong> &bull; 
+          <span class="${{secs > 0 ? 'text-emerald-400 font-medium' : 'text-neutral-500'}}">${{secs > 0 ? formatSecs(secs) : 'No activity recorded'}}</span>
           ${{hasMd ? `<span class="text-sky-400 font-mono text-[10px]"> • note</span>` : ''}}
         `;
       }}
@@ -722,7 +724,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         let extraDot = hasMd ? ' <span class="inline-block w-1.5 h-1.5 rounded-full bg-sky-400 mb-0.5"></span>' : '';
 
-        btn.className = `px-2.5 py-1 rounded-md transition text-xs font-mono ${{isActive ? 'bg-[#21262d] text-white font-medium border border-[#30363d]' : 'text-slate-400 hover:text-slate-200'}}`;
+        btn.className = `px-2.5 py-1 rounded-md transition text-xs font-mono ${{isActive ? 'bg-[#222222] text-white font-medium border border-[#333333]' : 'text-neutral-400 hover:text-white'}}`;
         btn.innerHTML = `${{d}}${{extraDot}}`;
         btn.onclick = () => {{
           currentDate = d;
@@ -797,7 +799,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const spanFormatted = formatSecs(spanSec);
       const pctActive = spanSec > 0 ? Math.round((totalSec / spanSec) * 100) : 0;
       document.getElementById("metric-observed-span").innerHTML = spanSec > 0 ? 
-        `<span>Observed: <strong class="text-slate-200">${{spanFormatted}}</strong> (${{pctActive}}% active)</span>` : 
+        `<span>Observed: <strong class="text-neutral-200">${{spanFormatted}}</strong> (${{pctActive}}% active)</span>` : 
         `<span>No active session data</span>`;
 
       // Deep Work Estimate (ChatGPT, GitHub, LeetCode, Antigravity, VS Code)
@@ -1069,33 +1071,33 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const vH = (vSec / sumSrc) * 100;
 
         const col = document.createElement("div");
-        col.className = `flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer select-none transition-all p-0.5 rounded-lg ${{isSelected ? 'bg-sky-500/10 ring-2 ring-sky-400 ring-offset-1 ring-offset-[#090d16]' : 'hover:bg-[#161b22]'}}`;
+        col.className = `flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer select-none transition-all p-0.5 rounded-lg ${{isSelected ? 'bg-sky-500/10 ring-2 ring-sky-400 ring-offset-1 ring-offset-black' : 'hover:bg-[#121212]'}}`;
         
         const topActs = (item.sortedActivities || []).filter(a => a.durationSeconds >= 60).slice(0, 2);
         let topActsHtml = "";
         if (topActs.length > 0) {{
-          topActsHtml = topActs.map(a => `<div class="truncate text-[10px] text-slate-300">• ${{escapeHtml(a.title.substring(0, 28))}}: <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong></div>`).join("");
+          topActsHtml = topActs.map(a => `<div class="truncate text-[10px] text-neutral-300">• ${{escapeHtml(a.title.substring(0, 28))}}: <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong></div>`).join("");
         }} else if (total > 0) {{
-          topActsHtml = `<div class="text-[10px] text-slate-400">Brief interactions &lt; 1m (${{formatSecs(total)}})</div>`;
+          topActsHtml = `<div class="text-[10px] text-neutral-400">Brief interactions &lt; 1m (${{formatSecs(total)}})</div>`;
         }} else {{
-          topActsHtml = `<div class="text-[10px] text-slate-500">No activity (Sleep / Idle)</div>`;
+          topActsHtml = `<div class="text-[10px] text-neutral-500">No activity (Sleep / Idle)</div>`;
         }}
 
         col.innerHTML = `
-          <div class="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-20 z-30 bg-slate-950 border border-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded-lg shadow-2xl pointer-events-none min-w-[160px] space-y-1">
-            <div class="flex items-center justify-between border-b border-slate-800 pb-1">
+          <div class="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-20 z-30 bg-[#0a0a0a] border border-[#262626] text-neutral-200 text-xs px-2.5 py-1.5 rounded-lg shadow-2xl pointer-events-none min-w-[160px] space-y-1">
+            <div class="flex items-center justify-between border-b border-[#1a1a1a] pb-1">
               <span class="font-mono font-bold text-sky-400">${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00</span>
-              <span class="font-mono text-slate-300 font-semibold">${{formatSecs(total)}}</span>
+              <span class="font-mono text-neutral-300 font-semibold">${{formatSecs(total)}}</span>
             </div>
             ${{topActsHtml}}
           </div>
-          <div class="w-full bg-[#161b22] rounded-t-sm flex flex-col-reverse overflow-hidden transition-all duration-300 group-hover:brightness-125" style="height: ${{Math.max(6, heightPct)}}%">
+          <div class="w-full bg-[#121212] rounded-t-sm flex flex-col-reverse overflow-hidden transition-all duration-300 group-hover:brightness-125" style="height: ${{Math.max(6, heightPct)}}%">
             <div class="bg-sky-500 w-full" style="height: ${{bH}}%"></div>
             <div class="bg-purple-500 w-full" style="height: ${{mH}}%"></div>
             <div class="bg-emerald-500 w-full" style="height: ${{dH}}%"></div>
             <div class="bg-amber-500 w-full" style="height: ${{vH}}%"></div>
           </div>
-          <span class="text-[10px] font-mono mt-1 ${{isSelected ? 'text-sky-300 font-bold' : total > 0 ? 'text-slate-300 font-medium' : 'text-slate-600'}}">${{String(h).padStart(2, "0")}}</span>
+          <span class="text-[10px] font-mono mt-1 ${{isSelected ? 'text-sky-300 font-bold' : total > 0 ? 'text-neutral-300 font-medium' : 'text-neutral-600'}}">${{String(h).padStart(2, "0")}}</span>
         `;
 
         col.onclick = () => {{
@@ -1129,27 +1131,27 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           <div>
             <div class="flex items-center gap-2">
               <h3 class="text-sm font-semibold text-[var(--foreground)]">Hour ${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00</h3>
-              <span class="px-2 py-0.5 rounded text-[11px] font-mono font-medium ${{totalSec > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'}}">
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono font-medium ${{totalSec > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-[#141414] text-neutral-400 border border-[#222222]'}}">
                 ${{totalSec > 0 ? formatSecs(totalSec) + ' active (' + pctOfHour + '%)' : 'No Activity'}}
               </span>
             </div>
-            <div class="text-xs text-slate-400 mt-0.5 font-mono">
+            <div class="text-xs text-neutral-400 mt-0.5 font-mono">
               ${{acts.length > 0 ? `${{acts.length}} activities &ge; 1 min` + (minorCount > 0 ? ` &bull; ${{minorCount}} brief under 1m` : '') : (totalSec > 0 ? 'Only brief interactions &lt; 1 min' : 'Idle span / Sleep')}}
             </div>
           </div>
         </div>
 
         <div class="flex items-center gap-1.5 self-end sm:self-auto">
-          <button onclick="selectHour(${{h > 0 ? h - 1 : 23}})" class="px-2.5 py-1 rounded-md text-xs font-mono bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition" title="Previous hour">
+          <button onclick="selectHour(${{h > 0 ? h - 1 : 23}})" class="px-2.5 py-1 rounded-md text-xs font-mono bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[#1f1f1f] transition" title="Previous hour">
             &larr; Prev
           </button>
-          <button onclick="selectHour(${{h < 23 ? h + 1 : 0}})" class="px-2.5 py-1 rounded-md text-xs font-mono bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)] transition" title="Next hour">
+          <button onclick="selectHour(${{h < 23 ? h + 1 : 0}})" class="px-2.5 py-1 rounded-md text-xs font-mono bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[#1f1f1f] transition" title="Next hour">
             Next &rarr;
           </button>
-          <button onclick="selectHour(${{data.peakHour}})" class="px-2.5 py-1 rounded-md text-xs font-mono ${{h === data.peakHour ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30' : 'bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)]'}} transition" title="Jump to peak activity hour">
+          <button onclick="selectHour(${{data.peakHour}})" class="px-2.5 py-1 rounded-md text-xs font-mono ${{h === data.peakHour ? 'bg-[#222222] text-white border border-[#333333]' : 'bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[#1f1f1f]'}} transition" title="Jump to peak activity hour">
             Peak (${{String(data.peakHour).padStart(2, "0")}}:00)
           </button>
-          <button onclick="toggleHourFilter(${{h}})" class="px-2.5 py-1 rounded-md text-xs font-mono ${{isFiltered ? 'bg-sky-500 text-white font-semibold' : 'bg-[#161b22] hover:bg-[#21262d] text-slate-300 border border-[var(--border)]'}} transition">
+          <button onclick="toggleHourFilter(${{h}})" class="px-2.5 py-1 rounded-md text-xs font-mono ${{isFiltered ? 'bg-[#222222] text-white border border-[#333333] font-semibold' : 'bg-[#121212] hover:bg-[#1a1a1a] text-neutral-300 border border-[#1f1f1f]'}} transition">
             ${{isFiltered ? 'Clear Filter' : 'Filter Ledger'}}
           </button>
         </div>
@@ -1158,16 +1160,16 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
       if (acts.length === 0) {{
         const empty = document.createElement("div");
-        empty.className = "py-8 text-center text-xs text-slate-500 space-y-1 font-mono";
+        empty.className = "py-8 text-center text-xs text-neutral-500 space-y-1 font-mono";
         if (totalSec > 0) {{
           empty.innerHTML = `
             <div>Only brief interactions (&lt; 1 min) logged during ${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00 (${{formatSecs(totalSec)}} total)</div>
-            <div class="text-[11px] text-slate-600">Events under 1 minute are hidden from this hourly view.</div>
+            <div class="text-[11px] text-neutral-600">Events under 1 minute are hidden from this hourly view.</div>
           `;
         }} else {{
           empty.innerHTML = `
             <div>No active screen sessions logged between ${{String(h).padStart(2, "0")}}:00 and ${{String(h + 1).padStart(2, "0")}}:00</div>
-            <div class="text-[11px] text-slate-600">Computer was idle, locked, or sleeping.</div>
+            <div class="text-[11px] text-neutral-600">Computer was idle, locked, or sleeping.</div>
           `;
         }}
         container.appendChild(empty);
@@ -1194,27 +1196,27 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         }}
 
         const row = document.createElement("div");
-        row.className = "p-2.5 rounded-lg bg-[#0d1117] border border-[var(--border)] hover:border-slate-700 transition space-y-2";
+        row.className = "p-2.5 rounded-lg bg-[#080808] border border-[var(--border)] hover:border-[#2a2a2a] transition space-y-2";
         row.innerHTML = `
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-xs">
             <div class="flex items-center gap-2.5 min-w-0">
-              <span class="font-mono text-slate-500 font-bold text-xs w-4 shrink-0">${{idx + 1}}.</span>
+              <span class="font-mono text-neutral-500 font-bold text-xs w-4 shrink-0">${{idx + 1}}.</span>
               <span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold uppercase tracking-wider border shrink-0 ${{srcBadge}}">
                 ${{act.source}}
               </span>
               <div class="min-w-0">
-                <div class="font-medium text-slate-200 truncate" title="${{escapeHtml(act.title)}}">${{escapeHtml(act.title)}}</div>
-                ${{act.subtitle ? `<div class="text-[11px] text-slate-500 font-mono truncate" title="${{escapeHtml(act.subtitle)}}">${{escapeHtml(act.subtitle)}}</div>` : ''}}
+                <div class="font-medium text-neutral-200 truncate" title="${{escapeHtml(act.title)}}">${{escapeHtml(act.title)}}</div>
+                ${{act.subtitle ? `<div class="text-[11px] text-neutral-500 font-mono truncate" title="${{escapeHtml(act.subtitle)}}">${{escapeHtml(act.subtitle)}}</div>` : ''}}
               </div>
             </div>
 
             <div class="flex items-center gap-3 shrink-0 self-end sm:self-auto font-mono text-xs">
-              <span class="text-slate-400">${{itemPct.toFixed(1)}}%</span>
-              <span class="font-bold text-white bg-[#161b22] px-2 py-0.5 rounded border border-[var(--border)]">${{formatSecs(act.durationSeconds)}}</span>
+              <span class="text-neutral-400">${{itemPct.toFixed(1)}}%</span>
+              <span class="font-bold text-white bg-[#121212] px-2 py-0.5 rounded border border-[#222222]">${{formatSecs(act.durationSeconds)}}</span>
             </div>
           </div>
 
-          <div class="w-full bg-[#161b22] h-1.5 rounded-full overflow-hidden">
+          <div class="w-full bg-[#141414] h-1.5 rounded-full overflow-hidden">
             <div class="${{barColor}} h-full rounded-full transition-all duration-300" style="width: ${{Math.min(100, itemPct)}}%"></div>
           </div>
         `;
@@ -1252,7 +1254,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         }}
 
         const row = document.createElement("div");
-        row.className = `p-3 rounded-xl bg-[#0d1117] border ${{h === selectedHour ? 'border-sky-500/60 ring-1 ring-sky-500/30' : 'border-[var(--border)]'}} hover:border-slate-700 transition cursor-pointer space-y-2`;
+        row.className = `p-3 rounded-xl bg-[#080808] border ${{h === selectedHour ? 'border-sky-500/60 ring-1 ring-sky-500/30' : 'border-[var(--border)]'}} hover:border-[#2a2a2a] transition cursor-pointer space-y-2`;
         row.onclick = () => {{
           selectHour(h);
           setHourlyViewMode('inspector');
@@ -1265,13 +1267,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           else if (a.source === "desktop") col = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
           else if (a.source === "vscode") col = "text-amber-400 bg-amber-500/10 border-amber-500/20";
           return `<span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono border ${{col}}">
-            <span class="font-medium text-slate-200 truncate max-w-[160px]">${{escapeHtml(a.title)}}</span>
+            <span class="font-medium text-neutral-200 truncate max-w-[160px]">${{escapeHtml(a.title)}}</span>
             <strong class="text-white">${{formatSecs(a.durationSeconds)}}</strong>
           </span>`;
         }}).join(" ");
 
         if (!actChips) {{
-          actChips = `<span class="text-[11px] text-slate-500 font-mono italic">Brief interactions (&lt; 1 min)</span>`;
+          actChips = `<span class="text-[11px] text-neutral-500 font-mono italic">Brief interactions (&lt; 1 min)</span>`;
         }}
 
         const pctOfHour = Math.min(100, Math.round((total / 3600) * 100));
@@ -1282,10 +1284,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
               <span class="font-mono font-bold text-xs text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
                 ${{String(h).padStart(2, "0")}}:00 &ndash; ${{String(h + 1).padStart(2, "0")}}:00
               </span>
-              <span class="text-xs text-slate-300 font-mono font-semibold">${{formatSecs(total)}} active</span>
-              <span class="text-[11px] text-slate-500 font-mono">(${{pctOfHour}}%)</span>
+              <span class="text-xs text-neutral-300 font-mono font-semibold">${{formatSecs(total)}} active</span>
+              <span class="text-[11px] text-neutral-500 font-mono">(${{pctOfHour}}%)</span>
             </div>
-            <span class="text-[11px] font-mono text-slate-500">${{acts.length}} activities &rarr;</span>
+            <span class="text-[11px] font-mono text-neutral-500">${{acts.length}} activities &rarr;</span>
           </div>
           <div class="flex flex-wrap gap-1.5 pt-0.5">
             ${{actChips}}
@@ -1298,14 +1300,14 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     function flushIdleBlock(container, startH, endH) {{
       const hoursCount = endH - startH + 1;
       const block = document.createElement("div");
-      block.className = "py-2 px-3 rounded-lg bg-[#090d16]/70 border border-dashed border-[#21262d] flex items-center justify-between text-xs text-slate-500 font-mono";
+      block.className = "py-2 px-3 rounded-lg bg-[#050505] border border-dashed border-[#1f1f1f] flex items-center justify-between text-xs text-neutral-500 font-mono";
       block.innerHTML = `
         <div class="flex items-center gap-2">
-          <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+          <span class="w-1.5 h-1.5 rounded-full bg-neutral-600"></span>
           <span>${{String(startH).padStart(2, "0")}}:00 &ndash; ${{String(endH + 1).padStart(2, "0")}}:00</span>
           <span>(${{hoursCount}}h idle)</span>
         </div>
-        <span class="text-[11px] text-slate-600">Inactive / Sleep</span>
+        <span class="text-[11px] text-neutral-600">Inactive / Sleep</span>
       `;
       container.appendChild(block);
     }}
@@ -1320,13 +1322,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       if (mode === "inspector") {{
         inspectorView.classList.remove("hidden");
         scheduleView.classList.add("hidden");
-        btnInspector.className = "px-2.5 py-1 rounded-md bg-[#21262d] text-white transition";
-        btnSchedule.className = "px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition";
+        btnInspector.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
+        btnSchedule.className = "px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition";
       }} else {{
         inspectorView.classList.add("hidden");
         scheduleView.classList.remove("hidden");
-        btnInspector.className = "px-2.5 py-1 rounded-md text-slate-400 hover:text-slate-200 transition";
-        btnSchedule.className = "px-2.5 py-1 rounded-md bg-[#21262d] text-white transition";
+        btnInspector.className = "px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition";
+        btnSchedule.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
       }}
     }}
 
@@ -1357,14 +1359,14 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       const container = document.getElementById("longest-sessions-list");
       container.innerHTML = "";
       if (!sessions || sessions.length === 0) {{
-        container.innerHTML = '<div class="text-xs text-slate-500">No sessions recorded</div>';
+        container.innerHTML = '<div class="text-xs text-neutral-500">No sessions recorded</div>';
         return;
       }}
 
       sessions.slice(0, 5).forEach((sess, idx) => {{
         const title = sess.context?.title || sess.context?.app || sess.context?.domain || sess.source;
         const card = document.createElement("div");
-        card.className = "p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-3 text-xs";
+        card.className = "p-2.5 rounded-xl bg-[#080808] border border-[#1a1a1a] flex items-center justify-between gap-3 text-xs";
         
         let colorClass = "text-sky-400 bg-sky-500/10 border-sky-500/20";
         if (sess.source === "mobile") colorClass = "text-purple-400 bg-purple-500/10 border-purple-500/20";
@@ -1373,16 +1375,16 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         card.innerHTML = `
           <div class="flex items-center gap-2.5 min-w-0">
-            <span class="font-mono text-slate-500 text-xs font-bold w-4">${{idx + 1}}.</span>
+            <span class="font-mono text-neutral-500 text-xs font-bold w-4">${{idx + 1}}.</span>
             <div class="min-w-0">
-              <div class="font-medium text-slate-200 truncate">${{title}}</div>
-              <div class="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+              <div class="font-medium text-neutral-200 truncate">${{title}}</div>
+              <div class="text-[11px] text-neutral-400 flex items-center gap-1.5 mt-0.5">
                 <span class="px-1.5 py-0.2 rounded border ${{colorClass}} text-[10px] font-semibold">${{sess.source}}</span>
                 <span>${{parseTimeOnly(sess.start)}} &ndash; ${{parseTimeOnly(sess.end)}}</span>
               </div>
             </div>
           </div>
-          <span class="font-mono font-bold text-slate-200 shrink-0">${{formatSecs(sess.duration_seconds)}}</span>
+          <span class="font-mono font-bold text-neutral-200 shrink-0">${{formatSecs(sess.duration_seconds)}}</span>
         `;
         container.appendChild(card);
       }});
@@ -1394,7 +1396,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       document.getElementById("domains-count-badge").textContent = `${{domains.length}} domains`;
       
       if (!domains || domains.length === 0) {{
-        container.innerHTML = '<div class="text-xs text-slate-500">No browser domain activity</div>';
+        container.innerHTML = '<div class="text-xs text-neutral-500">No browser domain activity</div>';
         return;
       }}
 
@@ -1403,10 +1405,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         row.className = "space-y-1";
         row.innerHTML = `
           <div class="flex justify-between items-center text-xs">
-            <span class="font-medium text-slate-200 truncate max-w-[200px]" title="${{d.domain}}">${{d.domain}}</span>
-            <span class="font-mono text-slate-400">${{formatSecs(d.duration_seconds)}} <span class="text-slate-500 font-normal">(${{d.percentage}}%)</span></span>
+            <span class="font-medium text-neutral-200 truncate max-w-[200px]" title="${{d.domain}}">${{d.domain}}</span>
+            <span class="font-mono text-neutral-400">${{formatSecs(d.duration_seconds)}} <span class="text-neutral-500 font-normal">(${{d.percentage}}%)</span></span>
           </div>
-          <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+          <div class="w-full bg-[#141414] h-1.5 rounded-full overflow-hidden">
             <div class="bg-sky-500 h-full rounded-full transition-all duration-500" style="width: ${{Math.min(100, d.percentage)}}%"></div>
           </div>
         `;
@@ -1420,7 +1422,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       document.getElementById("mobile-count-badge").textContent = `${{apps.length}} apps`;
 
       if (!apps || apps.length === 0) {{
-        container.innerHTML = '<div class="text-xs text-slate-500">No mobile app activity</div>';
+        container.innerHTML = '<div class="text-xs text-neutral-500">No mobile app activity</div>';
         return;
       }}
 
@@ -1430,11 +1432,11 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         row.innerHTML = `
           <div class="flex justify-between items-center text-xs">
             <div class="flex items-center gap-1.5 min-w-0">
-              <span class="font-medium text-slate-200 truncate max-w-[170px]">${{a.app}}</span>
+              <span class="font-medium text-neutral-200 truncate max-w-[170px]">${{a.app}}</span>
             </div>
-            <span class="font-mono text-slate-400">${{formatSecs(a.duration_seconds)}} <span class="text-slate-500 font-normal">(${{a.percentage}}%)</span></span>
+            <span class="font-mono text-neutral-400">${{formatSecs(a.duration_seconds)}} <span class="text-neutral-500 font-normal">(${{a.percentage}}%)</span></span>
           </div>
-          <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+          <div class="w-full bg-[#141414] h-1.5 rounded-full overflow-hidden">
             <div class="bg-purple-500 h-full rounded-full transition-all duration-500" style="width: ${{Math.min(100, a.percentage)}}%"></div>
           </div>
         `;
@@ -1448,7 +1450,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       document.getElementById("desktop-count-badge").textContent = `${{apps.length}} apps`;
 
       if (!apps || apps.length === 0) {{
-        container.innerHTML = '<div class="text-xs text-slate-500">No desktop app activity</div>';
+        container.innerHTML = '<div class="text-xs text-neutral-500">No desktop app activity</div>';
         return;
       }}
 
@@ -1457,10 +1459,10 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         row.className = "space-y-1";
         row.innerHTML = `
           <div class="flex justify-between items-center text-xs">
-            <span class="font-medium text-slate-200 truncate max-w-[180px]">${{a.app}}</span>
-            <span class="font-mono text-slate-400">${{formatSecs(a.duration_seconds)}} <span class="text-slate-500 font-normal">(${{a.percentage}}%)</span></span>
+            <span class="font-medium text-neutral-200 truncate max-w-[180px]">${{a.app}}</span>
+            <span class="font-mono text-neutral-400">${{formatSecs(a.duration_seconds)}} <span class="text-neutral-500 font-normal">(${{a.percentage}}%)</span></span>
           </div>
-          <div class="w-full bg-slate-900 h-1.5 rounded-full overflow-hidden">
+          <div class="w-full bg-[#141414] h-1.5 rounded-full overflow-hidden">
             <div class="bg-emerald-500 h-full rounded-full transition-all duration-500" style="width: ${{Math.min(100, a.percentage)}}%"></div>
           </div>
         `;
@@ -1504,7 +1506,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           filterPill.classList.remove("hidden");
           filterPill.innerHTML = `
             <span>Hour ${{String(activeHourFilter).padStart(2, "0")}}:00 &ndash; ${{String(activeHourFilter + 1).padStart(2, "0")}}:00</span>
-            <button onclick="toggleHourFilter(${{activeHourFilter}})" class="hover:text-white font-bold text-slate-400">&times;</button>
+            <button onclick="toggleHourFilter(${{activeHourFilter}})" class="hover:text-white font-bold text-neutral-400">&times;</button>
           `;
         }} else {{
           filterPill.classList.add("hidden");
@@ -1512,13 +1514,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       }}
 
       if (filtered.length === 0) {{
-        container.innerHTML = '<div class="p-6 text-center text-xs text-slate-500">No matching activity records found.</div>';
+        container.innerHTML = '<div class="p-6 text-center text-xs text-neutral-500">No matching activity records found.</div>';
         return;
       }}
 
       filtered.slice().reverse().forEach(item => {{
         const row = document.createElement("div");
-        row.className = "p-3 sm:px-4 hover:bg-slate-900/60 transition flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs";
+        row.className = "p-3 sm:px-4 hover:bg-[#0a0a0a] transition flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs";
 
         const title = item.context?.title || item.context?.app || item.context?.domain || item.source;
         const sub = item.context?.domain || item.context?.package || item.context?.file || item.context?.workspace || "";
@@ -1534,14 +1536,14 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
         row.innerHTML = `
           <div class="flex items-center gap-3 min-w-0">
-            <span class="font-mono text-slate-400 text-[11px] shrink-0 w-24">${{parseTimeOnly(item.start)}} &ndash; ${{parseTimeOnly(item.end)}}</span>
+            <span class="font-mono text-neutral-400 text-[11px] shrink-0 w-24">${{parseTimeOnly(item.start)}} &ndash; ${{parseTimeOnly(item.end)}}</span>
             ${{sourceBadge}}
             <div class="min-w-0">
-              <div class="font-medium text-slate-200 truncate max-w-sm sm:max-w-md md:max-w-xl" title="${{title}}">${{title}}</div>
-              ${{sub ? `<div class="text-[11px] text-slate-500 truncate max-w-sm">${{sub}}</div>` : ''}}
+              <div class="font-medium text-neutral-200 truncate max-w-sm sm:max-w-md md:max-w-xl" title="${{title}}">${{title}}</div>
+              ${{sub ? `<div class="text-[11px] text-neutral-500 truncate max-w-sm">${{sub}}</div>` : ''}}
             </div>
           </div>
-          <span class="font-mono font-semibold text-slate-300 self-end sm:self-auto shrink-0 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">${{formatSecs(item.duration_seconds)}}</span>
+          <span class="font-mono font-semibold text-neutral-300 self-end sm:self-auto shrink-0 bg-[#121212] px-2 py-0.5 rounded border border-[#222222]">${{formatSecs(item.duration_seconds)}}</span>
         `;
         container.appendChild(row);
       }});
@@ -1551,9 +1553,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     document.querySelectorAll(".tab-btn").forEach(btn => {{
       btn.onclick = () => {{
         document.querySelectorAll(".tab-btn").forEach(b => {{
-          b.className = "tab-btn px-3 py-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition flex items-center gap-1.5";
+          b.className = "tab-btn px-3 py-1.5 rounded-lg text-neutral-400 hover:text-white transition flex items-center gap-1.5";
         }});
-        btn.className = "tab-btn px-3 py-1.5 rounded-lg bg-sky-500 text-white font-medium transition flex items-center gap-1.5";
+        btn.className = "tab-btn px-3 py-1.5 rounded-lg bg-[#222222] text-white font-medium border border-[#333333] transition flex items-center gap-1.5";
         activeMainTab = btn.getAttribute("data-tab");
         updateViewModeVisibility();
       }};
@@ -1563,9 +1565,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     document.querySelectorAll(".filter-btn").forEach(btn => {{
       btn.onclick = () => {{
         document.querySelectorAll(".filter-btn").forEach(b => {{
-          b.className = "filter-btn px-2.5 py-1 rounded-lg text-slate-400 hover:text-slate-200 transition";
+          b.className = "filter-btn px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition text-xs";
         }});
-        btn.className = "filter-btn px-2.5 py-1 rounded-lg bg-sky-500 text-white font-medium transition";
+        btn.className = "filter-btn px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition text-xs";
         currentFilter = btn.getAttribute("data-filter");
         renderLedger(REPORTS_DATABASE[currentDate]?.timeline || []);
       }};
