@@ -123,6 +123,72 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </div>
     </div>
 
+    <!-- Annual Activity Contribution Heatmap (GitHub/LeetCode block style) -->
+    <section class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm space-y-3">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-slate-800/80">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-sm">
+            🟩
+          </div>
+          <div>
+            <h2 class="text-sm sm:text-base font-bold text-[var(--foreground)] flex items-center gap-2">
+              Annual Consistency & Activity Heatmap
+              <span id="calendar-summary-badge" class="text-xs font-mono font-medium px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                -- active days
+              </span>
+            </h2>
+            <p class="text-xs text-[var(--muted-foreground)]">Click any day block to inspect its complete timeline, app metrics, and executive audit</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <div id="calendar-hover-info" class="text-xs font-mono text-slate-300 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-800">
+            Selected: --
+          </div>
+
+          <!-- Color Scale Legend -->
+          <div class="flex items-center gap-1.5 text-[11px] text-slate-400 bg-slate-900/60 px-2.5 py-1.5 rounded-lg border border-slate-800">
+            <span>Less</span>
+            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#161b22] border border-[#272d37]" title="No activity"></span>
+            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#0e4429] border border-[#14532d]" title="< 2h"></span>
+            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#006d32] border border-[#166534]" title="2h - 4h"></span>
+            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#26a641] border border-[#22c55e]" title="4h - 6h"></span>
+            <span class="w-2.5 h-2.5 rounded-[2px] bg-[#39d353] border border-[#4ade80]" title="> 6h"></span>
+            <span>More</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Heatmap Scroll Container -->
+      <div id="calendar-scroll-container" class="overflow-x-auto custom-scroll pb-2 pt-1">
+        <div class="inline-flex gap-2 min-w-full">
+          <!-- Weekday Labels Column -->
+          <div class="flex flex-col text-[10px] text-slate-400 font-mono select-none pt-[18px] shrink-0" style="gap: 3px;">
+            <div class="h-[12px] flex items-center pr-1"></div>
+            <div class="h-[12px] flex items-center pr-1">Mon</div>
+            <div class="h-[12px] flex items-center pr-1"></div>
+            <div class="h-[12px] flex items-center pr-1">Wed</div>
+            <div class="h-[12px] flex items-center pr-1"></div>
+            <div class="h-[12px] flex items-center pr-1">Fri</div>
+            <div class="h-[12px] flex items-center pr-1"></div>
+          </div>
+
+          <!-- Month labels + 7-row block matrix -->
+          <div class="flex flex-col gap-1.5">
+            <!-- Months Header Row -->
+            <div id="calendar-months-row" class="h-4 relative text-[10px] text-slate-400 font-mono select-none">
+              <!-- Rendered via JS -->
+            </div>
+
+            <!-- Days Grid (7 rows, 53 columns) -->
+            <div id="calendar-days-grid" class="grid grid-rows-7 grid-flow-col" style="gap: 3px;">
+              <!-- 371 square blocks rendered via JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- KPI Metric Cards Grid -->
     <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-sky-500/40 transition">
@@ -533,6 +599,163 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       return html.join('');
     }}
 
+    function renderCalendarHeatmap() {{
+      const allDates = Object.keys(REPORTS_DATABASE).concat(Object.keys(ANALYSES_DATABASE));
+      let maxDateStr = "2026-09-30";
+      if (allDates.length > 0) {{
+        allDates.sort();
+        maxDateStr = allDates[allDates.length - 1];
+      }}
+
+      // Calculate anchor date (align to Saturday of the latest week)
+      const maxDate = new Date(maxDateStr + "T12:00:00Z");
+      const dayOfWeek = maxDate.getUTCDay(); // 0=Sun..6=Sat
+      const endSaturday = new Date(maxDate.getTime() + (6 - dayOfWeek) * 86400000);
+      const startSunday = new Date(endSaturday.getTime() - (52 * 7) * 86400000);
+
+      const monthsContainer = document.getElementById("calendar-months-row");
+      const gridContainer = document.getElementById("calendar-days-grid");
+      if (!monthsContainer || !gridContainer) return;
+
+      monthsContainer.innerHTML = "";
+      gridContainer.innerHTML = "";
+
+      const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      let lastMonth = -1;
+      let activeDaysCount = 0;
+      let totalActiveSecondsAll = 0;
+
+      // Summary across all records
+      Object.keys(REPORTS_DATABASE).forEach(d => {{
+        const s = REPORTS_DATABASE[d]?.summary?.total_active_seconds || 0;
+        if (s > 0) {{
+          activeDaysCount++;
+          totalActiveSecondsAll += s;
+        }}
+      }});
+      const summaryBadge = document.getElementById("calendar-summary-badge");
+      if (summaryBadge) {{
+        summaryBadge.textContent = `${{activeDaysCount}} active days • ${{formatSecs(totalActiveSecondsAll)}} recorded`;
+      }}
+
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+      for (let w = 0; w < 53; w++) {{
+        // Month label at Wednesday of week
+        const wednesday = new Date(startSunday.getTime() + (w * 7 + 3) * 86400000);
+        const m = wednesday.getUTCMonth();
+        if (m !== lastMonth) {{
+          lastMonth = m;
+          const mLabel = document.createElement("span");
+          mLabel.className = "absolute font-semibold text-slate-400";
+          mLabel.style.left = `${{w * 15}}px`;
+          mLabel.textContent = mNames[m];
+          monthsContainer.appendChild(mLabel);
+        }}
+
+        for (let d = 0; d < 7; d++) {{
+          const cur = new Date(startSunday.getTime() + (w * 7 + d) * 86400000);
+          const dateStr = cur.toISOString().split("T")[0];
+          const isSelected = dateStr === currentDate;
+          const isFuture = cur.getTime() > (new Date(maxDateStr + "T23:59:59Z")).getTime();
+
+          const rep = REPORTS_DATABASE[dateStr];
+          const secs = rep?.summary?.total_active_seconds || 0;
+          const hasMd = !!ANALYSES_DATABASE[dateStr];
+          const sessionCount = rep?.summary?.session_count || 0;
+
+          const block = document.createElement("button");
+          block.type = "button";
+          block.dataset.date = dateStr;
+
+          // Color scale matching GitHub / LeetCode block style
+          let lvlClass = "bg-[#161b22] border-[#272d37]";
+          if (secs > 0) {{
+            if (secs < 7200) {{
+              lvlClass = "bg-[#0e4429] border-[#14532d]";
+            }} else if (secs < 14400) {{
+              lvlClass = "bg-[#006d32] border-[#166534]";
+            }} else if (secs < 21600) {{
+              lvlClass = "bg-[#26a641] border-[#22c55e]";
+            }} else {{
+              lvlClass = "bg-[#39d353] border-[#4ade80]";
+            }}
+          }}
+
+          let baseClass = `w-3 h-3 rounded-[2.5px] border transition-all duration-100 relative ${{lvlClass}}`;
+          if (isFuture) {{
+            baseClass += " opacity-20 pointer-events-none";
+          }} else {{
+            baseClass += " hover:scale-125 hover:z-20 cursor-pointer";
+          }}
+
+          if (isSelected) {{
+            baseClass += " ring-2 ring-sky-400 ring-offset-1 ring-offset-[#090d16] scale-125 z-10 shadow-lg shadow-sky-500/40";
+          }}
+
+          block.className = baseClass;
+
+          const friendlyDay = `${{dayNames[cur.getUTCDay()]}}, ${{mNames[cur.getUTCMonth()]}} ${{cur.getUTCDate()}}, ${{cur.getUTCFullYear()}}`;
+          const activeText = secs > 0 ? `${{formatSecs(secs)}} active (${{sessionCount}} sessions)` : "No active sessions";
+          const mdText = hasMd ? " • 📝 Journal note" : "";
+          block.title = `${{friendlyDay}}: ${{activeText}}${{mdText}}`;
+
+          block.onmouseenter = () => {{
+            const infoBox = document.getElementById("calendar-hover-info");
+            if (infoBox) {{
+              infoBox.innerHTML = `
+                <span class="text-sky-400 font-semibold">${{friendlyDay}}</span> &bull; 
+                <span class="${{secs > 0 ? 'text-emerald-400 font-bold' : 'text-slate-400'}}">${{secs > 0 ? formatSecs(secs) : 'No activity'}}</span>
+                ${{sessionCount > 0 ? `<span class="text-slate-400"> (${{sessionCount}} sessions)</span>` : ''}}
+                ${{hasMd ? `<span class="text-amber-400"> • 📝 Journal</span>` : ''}}
+              `;
+            }}
+          }};
+
+          block.onmouseleave = () => {{
+            updateCalendarSelectedInfo();
+          }};
+
+          block.onclick = () => {{
+            currentDate = dateStr;
+            renderAll();
+            initDateButtons();
+            renderCalendarHeatmap();
+          }};
+
+          gridContainer.appendChild(block);
+        }}
+      }}
+
+      updateCalendarSelectedInfo();
+    }}
+
+    function updateCalendarSelectedInfo() {{
+      const rep = REPORTS_DATABASE[currentDate];
+      const secs = rep?.summary?.total_active_seconds || 0;
+      const hasMd = !!ANALYSES_DATABASE[currentDate];
+      const sessionCount = rep?.summary?.session_count || 0;
+      
+      const parts = currentDate.split("-");
+      let friendlyDate = currentDate;
+      if (parts.length === 3) {{
+        const dObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        friendlyDate = `${{dayNames[dObj.getDay()]}}, ${{mNames[dObj.getMonth()]}} ${{dObj.getDate()}}, ${{dObj.getFullYear()}}`;
+      }}
+
+      const infoBox = document.getElementById("calendar-hover-info");
+      if (infoBox) {{
+        infoBox.innerHTML = `
+          <span class="text-slate-400">Selected:</span> 
+          <strong class="text-white">${{friendlyDate}}</strong> &bull; 
+          <span class="${{secs > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-400'}}">${{secs > 0 ? formatSecs(secs) : 'No activity recorded'}}</span>
+          ${{hasMd ? `<span class="text-amber-400"> • 📝 Journal</span>` : ''}}
+        `;
+      }}
+    }}
+
     function initDateButtons() {{
       const container = document.getElementById("date-buttons-container");
       container.innerHTML = "";
@@ -556,6 +779,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           currentDate = d;
           renderAll();
           initDateButtons();
+          renderCalendarHeatmap();
         }};
         container.appendChild(btn);
       }});
@@ -1015,6 +1239,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
             currentDate = d;
             initDateButtons();
             renderAll();
+            renderCalendarHeatmap();
           }} catch(err) {{
             alert("Could not parse JSON report file: " + err.message);
           }}
@@ -1024,6 +1249,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           currentDate = d;
           initDateButtons();
           renderAll();
+          renderCalendarHeatmap();
         }}
       }};
       reader.readAsText(file);
@@ -1032,6 +1258,15 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     // Initialization
     initDateButtons();
     renderAll();
+    renderCalendarHeatmap();
+
+    // Auto-scroll calendar container to rightmost edge (latest month) on initial load
+    setTimeout(() => {{
+      const scroller = document.getElementById("calendar-scroll-container");
+      if (scroller) {{
+        scroller.scrollLeft = scroller.scrollWidth;
+      }}
+    }}, 60);
   </script>
 </body>
 </html>
