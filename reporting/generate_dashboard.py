@@ -286,6 +286,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         <div class="flex items-center gap-2">
           <div class="inline-flex p-0.5 bg-[#000000] rounded-lg border border-[var(--border)] text-xs font-medium" id="hourly-mode-toggle">
             <button id="btn-mode-inspector" onclick="setHourlyViewMode('inspector')" class="px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition">Hour Inspector</button>
+            <button id="btn-mode-duallane" onclick="setHourlyViewMode('duallane')" class="px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition">Dual-Lane (PC vs Mobile)</button>
             <button id="btn-mode-schedule" onclick="setHourlyViewMode('schedule')" class="px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition">24h Schedule</button>
           </div>
         </div>
@@ -319,6 +320,11 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       <!-- Selected Hour Inspector Card -->
       <div id="hourly-inspector-container" class="bg-[#000000] border border-[var(--border)] rounded-xl p-4 space-y-3">
         <!-- Injected by renderHourlyInspector() -->
+      </div>
+
+      <!-- Dual-Lane Swimlane (PC vs Mobile) -->
+      <div id="hourly-duallane-container" class="hidden bg-[#000000] border border-[var(--border)] rounded-xl p-4 space-y-4">
+        <!-- Injected by renderDualLaneSwimlane() -->
       </div>
 
       <!-- Chronological 24h Schedule Feed (Toggleable) -->
@@ -430,6 +436,13 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       if (h > 0) return `${{h}}h ${{m}}m`;
       if (m > 0) return `${{m}}m ${{r}}s`;
       return `${{r}}s`;
+    }}
+
+    function formatTimeOfDay(totalSec) {{
+      const h = Math.floor(totalSec / 3600) % 24;
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = Math.floor(totalSec % 60);
+      return `${{String(h).padStart(2, "0")}}:${{String(m).padStart(2, "0")}}:${{String(s).padStart(2, "0")}}`;
     }}
 
     function parseTimeOnly(isoStr) {{
@@ -1045,6 +1058,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
 
       renderHourlyRhythmBars(data);
       renderHourlyInspector(data);
+      renderDualLaneSwimlane();
       renderHourlySchedule(data);
     }}
 
@@ -1071,7 +1085,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         const vH = (vSec / sumSrc) * 100;
 
         const col = document.createElement("div");
-        col.className = `flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer select-none transition-all p-0.5 rounded-lg ${{isSelected ? 'bg-sky-500/10 ring-2 ring-sky-400 ring-offset-1 ring-offset-black' : 'hover:bg-[#121212]'}}`;
+        col.className = `flex-1 flex flex-col items-center justify-end h-full group relative cursor-pointer select-none transition-all p-0.5 rounded-lg ${{isSelected ? 'bg-sky-500/20' : 'hover:bg-[#121212]'}}`;
         
         const topActs = (item.sortedActivities || []).filter(a => a.durationSeconds >= 60).slice(0, 2);
         let topActsHtml = "";
@@ -1157,6 +1171,145 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         </div>
       `;
       container.appendChild(header);
+
+      if (totalSec > 0) {{
+        // Mini Dual-Lane timeline strip for this 60-minute window
+        const rep = REPORTS_DATABASE[currentDate] || {{}};
+        const hStart = h * 3600;
+        const hEnd = (h + 1) * 3600;
+        const pcSegs = [];
+        const mobSegs = [];
+
+        (rep.timeline || []).forEach(item => {{
+          const sPart = parseLocalTimeParts(item.start);
+          const ePart = parseLocalTimeParts(item.end);
+          if (!sPart || !ePart) return;
+          let sSec = sPart.totalSeconds;
+          let eSec = ePart.totalSeconds;
+          if (eSec < sSec) eSec += 86400;
+
+          const ovS = Math.max(sSec, hStart);
+          const ovE = Math.min(eSec, hEnd);
+          if (ovE > ovS) {{
+            const dur = ovE - ovS;
+            const leftPct = ((ovS - hStart) / 3600) * 100;
+            const widthPct = Math.max(0.5, (dur / 3600) * 100);
+            const ctx = item.context || {{}};
+            const title = ctx.title || ctx.app || ctx.domain || item.source;
+            const seg = {{
+              startSec: ovS,
+              endSec: ovE,
+              duration: dur,
+              leftPct: leftPct,
+              widthPct: widthPct,
+              source: item.source,
+              title: title
+            }};
+            if (item.source === "mobile") {{
+              mobSegs.push(seg);
+            }} else {{
+              pcSegs.push(seg);
+            }}
+          }}
+        }});
+
+        // Overlap computation for this hour
+        const hourOverlaps = [];
+        pcSegs.forEach(p => {{
+          mobSegs.forEach(m => {{
+            const os = Math.max(p.startSec, m.startSec);
+            const oe = Math.min(p.endSec, m.endSec);
+            if (oe > os) {{
+              hourOverlaps.push({{
+                leftPct: ((os - hStart) / 3600) * 100,
+                widthPct: Math.max(0.5, ((oe - os) / 3600) * 100),
+                duration: oe - os,
+                pcTitle: p.title,
+                mobTitle: m.title
+              }});
+            }}
+          }});
+        }});
+
+        // Deduplicate overlap seconds
+        const mergedHOverlaps = [];
+        hourOverlaps.slice().sort((a, b) => a.leftPct - b.leftPct).forEach(ov => {{
+          const s = ov.leftPct;
+          const e = ov.leftPct + ov.widthPct;
+          if (!mergedHOverlaps.length || s > mergedHOverlaps[mergedHOverlaps.length - 1][1]) {{
+            mergedHOverlaps.push([s, e]);
+          }} else {{
+            mergedHOverlaps[mergedHOverlaps.length - 1][1] = Math.max(mergedHOverlaps[mergedHOverlaps.length - 1][1], e);
+          }}
+        }});
+        const hourOverlapSec = Math.round(mergedHOverlaps.reduce((sum, [s, e]) => sum + ((e - s) / 100 * 3600), 0));
+
+        const miniDualLane = document.createElement("div");
+        miniDualLane.className = "p-3 rounded-xl bg-[#050505] border border-[#1a1a1a] space-y-2.5 my-1";
+
+        let pcBlocksHtml = pcSegs.map(s => {{
+          let col = "bg-sky-500";
+          if (s.source === "vscode") col = "bg-amber-500";
+          else if (s.source === "desktop") col = "bg-emerald-500";
+          return `<div class="absolute top-0 bottom-0 ${{col}} rounded-[2px] transition hover:brightness-125 cursor-pointer" style="left: ${{s.leftPct}}%; width: ${{s.widthPct}}%;" title="${{escapeHtml(s.title)}} (${{formatSecs(s.duration)}})"></div>`;
+        }}).join("");
+
+        let mobBlocksHtml = mobSegs.map(s => {{
+          return `<div class="absolute top-0 bottom-0 bg-purple-500 rounded-[2px] transition hover:brightness-125 cursor-pointer" style="left: ${{s.leftPct}}%; width: ${{s.widthPct}}%;" title="${{escapeHtml(s.title)}} (${{formatSecs(s.duration)}})"></div>`;
+        }}).join("");
+
+        let overlapBlocksHtml = hourOverlaps.map(ov => {{
+          return `<div class="absolute top-0 bottom-0 bg-amber-400 rounded-[2px] z-10 transition hover:brightness-125 cursor-pointer" style="left: ${{ov.leftPct}}%; width: ${{ov.widthPct}}%;" title="⚡ Simultaneous Co-Use: ${{escapeHtml(ov.pcTitle)}} + ${{escapeHtml(ov.mobTitle)}} (${{formatSecs(ov.duration)}})"></div>`;
+        }}).join("");
+
+        miniDualLane.innerHTML = `
+          <div class="flex items-center justify-between text-[11px] font-mono">
+            <span class="text-neutral-400 font-medium flex items-center gap-1.5">
+              <span>Dual-Lane Track (Hour ${{String(h).padStart(2, "0")}}:00 Window)</span>
+              ${{hourOverlapSec > 0 ? `<span class="px-1.5 py-0.2 rounded text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">⚡ ${{formatSecs(hourOverlapSec)}} Co-Use</span>` : ''}}
+            </span>
+            <div class="flex items-center gap-3 text-[10px] text-neutral-500">
+              <span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-sm bg-sky-400"></span> PC</span>
+              <span class="inline-flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-sm bg-purple-400"></span> Phone</span>
+              ${{hourOverlaps.length > 0 ? `<span class="inline-flex items-center gap-1 text-amber-300 font-semibold"><span class="w-1.5 h-1.5 rounded-sm bg-amber-400"></span> Overlap</span>` : ''}}
+            </div>
+          </div>
+
+          <div class="space-y-1.5 relative pt-1">
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-mono text-neutral-400 w-10 shrink-0">PC</span>
+              <div class="flex-1 h-3.5 bg-[#121212] rounded relative overflow-hidden">
+                ${{pcBlocksHtml || '<span class="text-[9px] text-neutral-600 font-mono absolute inset-0 flex items-center px-2">idle</span>'}}
+              </div>
+            </div>
+
+            ${{hourOverlaps.length > 0 ? `
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-mono text-amber-400 w-10 shrink-0 font-semibold">⚡ Co</span>
+              <div class="flex-1 h-2 bg-[#121212] rounded relative overflow-hidden">
+                ${{overlapBlocksHtml}}
+              </div>
+            </div>
+            ` : ''}}
+
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-mono text-neutral-400 w-10 shrink-0">Phone</span>
+              <div class="flex-1 h-3.5 bg-[#121212] rounded relative overflow-hidden">
+                ${{mobBlocksHtml || '<span class="text-[9px] text-neutral-600 font-mono absolute inset-0 flex items-center px-2">idle</span>'}}
+              </div>
+            </div>
+
+            <div class="flex justify-between text-[9px] font-mono text-neutral-600 pl-12 pr-0.5 pt-0.5">
+              <span>00m</span>
+              <span>15m</span>
+              <span>30m</span>
+              <span>45m</span>
+              <span>60m</span>
+            </div>
+          </div>
+        `;
+        container.appendChild(miniDualLane);
+      }}
 
       if (acts.length === 0) {{
         const empty = document.createElement("div");
@@ -1254,7 +1407,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         }}
 
         const row = document.createElement("div");
-        row.className = `p-3 rounded-xl bg-[#080808] border ${{h === selectedHour ? 'border-sky-500/60 ring-1 ring-sky-500/30' : 'border-[var(--border)]'}} hover:border-[#2a2a2a] transition cursor-pointer space-y-2`;
+        row.className = `p-3 rounded-xl ${{h === selectedHour ? 'bg-[#141414]' : 'bg-[#080808]'}} border border-[var(--border)] hover:border-[#2a2a2a] transition cursor-pointer space-y-2`;
         row.onclick = () => {{
           selectHour(h);
           setHourlyViewMode('inspector');
@@ -1312,23 +1465,394 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       container.appendChild(block);
     }}
 
+    function renderDualLaneSwimlane() {{
+      const container = document.getElementById("hourly-duallane-container");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const rep = REPORTS_DATABASE[currentDate] || {{}};
+      const timeline = rep.timeline || [];
+      const sources = rep.sources || {{}};
+
+      const pcSessions = [];
+      const mobSessions = [];
+
+      timeline.forEach(item => {{
+        const sPart = parseLocalTimeParts(item.start);
+        const ePart = parseLocalTimeParts(item.end);
+        if (!sPart || !ePart) return;
+
+        let sSec = sPart.totalSeconds;
+        let eSec = ePart.totalSeconds;
+        if (eSec < sSec) eSec += 86400;
+
+        const dur = Math.max(1, eSec - sSec);
+        const ctx = item.context || {{}};
+        let title = "";
+        let subtitle = "";
+
+        if (item.source === "browser") {{
+          title = ctx.title || ctx.domain || "Browser";
+          subtitle = ctx.domain || "";
+        }} else if (item.source === "desktop") {{
+          title = ctx.app || "Desktop App";
+          subtitle = (ctx.title && ctx.title !== ctx.app) ? ctx.title : "";
+        }} else if (item.source === "mobile") {{
+          title = ctx.app || ctx.package || "Mobile App";
+          subtitle = ctx.package || "";
+        }} else if (item.source === "vscode") {{
+          title = ctx.file || ctx.workspace || "VS Code";
+          subtitle = ctx.workspace || "";
+        }} else {{
+          title = item.source || "Session";
+        }}
+
+        const sess = {{
+          source: item.source,
+          startSec: sSec,
+          endSec: eSec,
+          duration: dur,
+          startStr: formatTimeOfDay(sSec),
+          endStr: formatTimeOfDay(eSec),
+          title: title,
+          subtitle: subtitle,
+          rawItem: item
+        }};
+
+        if (item.source === "mobile") {{
+          mobSessions.push(sess);
+        }} else {{
+          pcSessions.push(sess);
+        }}
+      }});
+
+      // Compute pairwise overlaps between PC and Mobile
+      const rawOverlaps = [];
+      pcSessions.forEach(p => {{
+        mobSessions.forEach(m => {{
+          const os = Math.max(p.startSec, m.startSec);
+          const oe = Math.min(p.endSec, m.endSec);
+          if (oe > os) {{
+            rawOverlaps.push({{
+              startSec: os,
+              endSec: oe,
+              duration: oe - os,
+              pc: p,
+              mob: m,
+              hour: Math.floor(os / 3600)
+            }});
+          }}
+        }});
+      }});
+
+      // Chronological sort
+      rawOverlaps.sort((a, b) => a.startSec - b.startSec);
+
+      // Deduplicate overlapping intervals for total co-use duration
+      const mergedIntervals = [];
+      rawOverlaps.forEach(o => {{
+        if (!mergedIntervals.length || o.startSec > mergedIntervals[mergedIntervals.length - 1][1]) {{
+          mergedIntervals.push([o.startSec, o.endSec]);
+        }} else {{
+          mergedIntervals[mergedIntervals.length - 1][1] = Math.max(mergedIntervals[mergedIntervals.length - 1][1], o.endSec);
+        }}
+      }});
+      const totalCoUseSec = mergedIntervals.reduce((sum, [s, e]) => sum + (e - s), 0);
+
+      // PC total seconds
+      const bSec = sources.browser?.duration_seconds || 0;
+      const dSec = sources.desktop?.duration_seconds || 0;
+      const vSec = sources.vscode?.duration_seconds || 0;
+      const pcTotalSec = bSec + dSec + vSec || pcSessions.reduce((sum, s) => sum + s.duration, 0);
+
+      // Mobile total seconds
+      const mobTotalSec = sources.mobile?.duration_seconds || mobSessions.reduce((sum, s) => sum + s.duration, 0);
+
+      // Continuous non-overlapping coverage
+      const allActiveIntervals = [];
+      [...pcSessions, ...mobSessions].forEach(s => {{
+        allActiveIntervals.push([s.startSec, s.endSec]);
+      }});
+      allActiveIntervals.sort((a, b) => a[0] - b[0]);
+      const mergedAll = [];
+      allActiveIntervals.forEach(([s, e]) => {{
+        if (!mergedAll.length || s > mergedAll[mergedAll.length - 1][1]) {{
+          mergedAll.push([s, e]);
+        }} else {{
+          mergedAll[mergedAll.length - 1][1] = Math.max(mergedAll[mergedAll.length - 1][1], e);
+        }}
+      }});
+      const totalUnionSec = mergedAll.reduce((sum, [s, e]) => sum + (e - s), 0);
+
+      // 1. Header & Summary Cards
+      const headerSection = document.createElement("div");
+      headerSection.className = "space-y-3";
+      headerSection.innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1">
+          <div>
+            <h3 class="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+              <span>Dual-Lane Swimlane (PC Workstation vs Mobile Smartphone)</span>
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium">Parallel Tracks</span>
+            </h3>
+            <p class="text-xs text-[var(--muted-foreground)] mt-0.5">
+              Renders independent timelines for PC and smartphone to preserve true duration and highlight concurrent co-use / multitasking without timeline conflicts.
+            </p>
+          </div>
+          <div class="flex items-center gap-2 text-xs font-mono">
+            <span class="text-neutral-400">Selected Hour:</span>
+            <span class="px-2 py-0.5 rounded bg-[#161616] text-sky-400 border border-[#2a2a2a] font-bold">
+              ${{selectedHour !== null ? String(selectedHour).padStart(2, "0") + ":00" : "None"}}
+            </span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <div class="p-2.5 rounded-lg bg-[#080808] border border-[var(--border)]">
+            <div class="text-[11px] text-neutral-400 font-medium flex items-center gap-1.5">
+              <span>💻 PC Workstation</span>
+            </div>
+            <div class="text-base font-bold text-white font-mono mt-0.5">${{formatSecs(pcTotalSec)}}</div>
+            <div class="text-[10px] text-neutral-500 font-mono mt-0.5">${{pcSessions.length}} sessions logged</div>
+          </div>
+
+          <div class="p-2.5 rounded-lg bg-[#080808] border border-[var(--border)]">
+            <div class="text-[11px] text-neutral-400 font-medium flex items-center gap-1.5">
+              <span>📱 Mobile Smartphone</span>
+            </div>
+            <div class="text-base font-bold text-purple-400 font-mono mt-0.5">${{formatSecs(mobTotalSec)}}</div>
+            <div class="text-[10px] text-neutral-500 font-mono mt-0.5">${{mobSessions.length}} sessions logged</div>
+          </div>
+
+          <div class="p-2.5 rounded-lg bg-[#080808] border border-[var(--border)]">
+            <div class="text-[11px] text-amber-400 font-medium flex items-center gap-1.5">
+              <span>⚡ Concurrent Co-Use</span>
+            </div>
+            <div class="text-base font-bold text-amber-300 font-mono mt-0.5">${{formatSecs(totalCoUseSec)}}</div>
+            <div class="text-[10px] text-neutral-500 font-mono mt-0.5">${{rawOverlaps.length}} overlap sessions</div>
+          </div>
+
+          <div class="p-2.5 rounded-lg bg-[#080808] border border-[var(--border)]">
+            <div class="text-[11px] text-neutral-400 font-medium flex items-center gap-1.5">
+              <span>🕒 Continuous Coverage</span>
+            </div>
+            <div class="text-base font-bold text-emerald-400 font-mono mt-0.5">${{formatSecs(totalUnionSec)}}</div>
+            <div class="text-[10px] text-neutral-500 font-mono mt-0.5">Deduplicated active span</div>
+          </div>
+        </div>
+      `;
+      container.appendChild(headerSection);
+
+      // 2. Swimlane Graphic Canvas
+      const swimlaneCard = document.createElement("div");
+      swimlaneCard.className = "p-3 sm:p-4 rounded-xl bg-[#050505] border border-[var(--border)] space-y-3";
+
+      const selHourLeft = selectedHour !== null ? (selectedHour / 24) * 100 : 0;
+      const selHourWidth = (1 / 24) * 100;
+
+      let gridLinesHtml = "";
+      for (let h = 0; h <= 24; h += 2) {{
+        const leftPct = (h / 24) * 100;
+        gridLinesHtml += `
+          <div class="absolute top-0 bottom-0 border-l border-[#1a1a1a] pointer-events-none" style="left: ${{leftPct}}%;">
+            <span class="absolute -top-5 -translate-x-1/2 text-[9px] font-mono text-neutral-500">${{String(h).padStart(2, "0")}}:00</span>
+          </div>
+        `;
+      }}
+
+      let pcBlocksHtml = pcSessions.map(s => {{
+        const leftPct = Math.min(100, Math.max(0, (s.startSec / 86400) * 100));
+        const widthPct = Math.min(100 - leftPct, Math.max(0.3, (s.duration / 86400) * 100));
+        let col = "bg-sky-500";
+        if (s.source === "vscode") col = "bg-amber-500";
+        else if (s.source === "desktop") col = "bg-emerald-500";
+        const tooltip = `[${{s.source.toUpperCase()}}] ${{escapeHtml(s.title)}}\\n${{s.startStr}} - ${{s.endStr}} (${{formatSecs(s.duration)}})\\nClick to inspect hour`;
+        return `<div onclick="selectHour(${{Math.floor(s.startSec / 3600)}}); event.stopPropagation();" class="absolute top-0.5 bottom-0.5 ${{col}} rounded-[2px] transition hover:brightness-125 cursor-pointer" style="left: ${{leftPct}}%; width: ${{widthPct}}%;" title="${{tooltip}}"></div>`;
+      }}).join("");
+
+      let mobBlocksHtml = mobSessions.map(s => {{
+        const leftPct = Math.min(100, Math.max(0, (s.startSec / 86400) * 100));
+        const widthPct = Math.min(100 - leftPct, Math.max(0.3, (s.duration / 86400) * 100));
+        const tooltip = `[MOBILE] ${{escapeHtml(s.title)}}\\n${{s.startStr}} - ${{s.endStr}} (${{formatSecs(s.duration)}})\\nClick to inspect hour`;
+        return `<div onclick="selectHour(${{Math.floor(s.startSec / 3600)}}); event.stopPropagation();" class="absolute top-0.5 bottom-0.5 bg-purple-500 rounded-[2px] transition hover:brightness-125 cursor-pointer" style="left: ${{leftPct}}%; width: ${{widthPct}}%;" title="${{tooltip}}"></div>`;
+      }}).join("");
+
+      let overlapBlocksHtml = rawOverlaps.map(ov => {{
+        const leftPct = Math.min(100, Math.max(0, (ov.startSec / 86400) * 100));
+        const widthPct = Math.min(100 - leftPct, Math.max(0.3, (ov.duration / 86400) * 100));
+        const sTime = formatTimeOfDay(ov.startSec);
+        const eTime = formatTimeOfDay(ov.endSec);
+        const tooltip = `⚡ Co-Use: ${{escapeHtml(ov.pc.title)}} + ${{escapeHtml(ov.mob.title)}}\\n${{sTime}} - ${{eTime}} (${{formatSecs(ov.duration)}})\\nClick to inspect hour ${{ov.hour}}:00`;
+        return `<div onclick="selectHour(${{ov.hour}}); event.stopPropagation();" class="absolute top-0.5 bottom-0.5 bg-gradient-to-r from-amber-400 to-rose-400 rounded-[2px] transition hover:brightness-125 cursor-pointer z-10" style="left: ${{leftPct}}%; width: ${{widthPct}}%;" title="${{tooltip}}"></div>`;
+      }}).join("");
+
+      swimlaneCard.innerHTML = `
+        <div class="flex items-center justify-between text-xs pb-1">
+          <span class="font-mono text-neutral-400">24-Hour Dual-Lane Timeline Strip (Click any point to select hour)</span>
+          <div class="flex items-center gap-3 text-[11px] font-mono text-neutral-400">
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-sky-500"></span> Browser</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-amber-500"></span> VS Code</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-emerald-500"></span> Desktop</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-purple-500"></span> Mobile</span>
+            <span class="inline-flex items-center gap-1 text-amber-300 font-semibold"><span class="w-2 h-2 rounded-sm bg-gradient-to-r from-amber-400 to-rose-400"></span> ⚡ Co-Use</span>
+          </div>
+        </div>
+
+        <div class="relative pt-6 pb-2 select-none" id="swimlane-tracks-wrapper">
+          <div class="relative h-24 bg-[#0a0a0a] rounded-lg border border-[var(--border)] overflow-hidden cursor-crosshair" id="swimlane-canvas-box">
+            ${{gridLinesHtml}}
+
+            ${{selectedHour !== null ? `
+              <div class="absolute top-0 bottom-0 bg-sky-500/10 border-x border-sky-500/30 pointer-events-none transition-all duration-200 z-0" style="left: ${{selHourLeft}}%; width: ${{selHourWidth}}%;">
+                <span class="absolute bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-mono text-sky-300 font-bold bg-[#000000]/80 px-1 rounded">${{String(selectedHour).padStart(2, "0")}}h</span>
+              </div>
+            ` : ''}}
+
+            <!-- PC Track (Row 1) -->
+            <div class="absolute left-0 right-0 top-1 h-7 border-b border-[#141414]">
+              <span class="absolute left-2 top-1.5 text-[9px] font-mono text-neutral-500 uppercase tracking-wider font-bold z-20 pointer-events-none">PC Track</span>
+              <div class="w-full h-full relative">
+                ${{pcBlocksHtml}}
+              </div>
+            </div>
+
+            <!-- Overlap / Co-Use Track (Row 2) -->
+            <div class="absolute left-0 right-0 top-8 h-4 border-b border-[#141414] bg-[#0c0c0c]">
+              <span class="absolute left-2 top-0.5 text-[8px] font-mono text-amber-500/80 uppercase tracking-wider font-bold z-20 pointer-events-none">⚡ Co-Use</span>
+              <div class="w-full h-full relative">
+                ${{overlapBlocksHtml}}
+              </div>
+            </div>
+
+            <!-- Mobile Track (Row 3) -->
+            <div class="absolute left-0 right-0 top-12 h-7">
+              <span class="absolute left-2 top-1.5 text-[9px] font-mono text-purple-400/80 uppercase tracking-wider font-bold z-20 pointer-events-none">Mobile Track</span>
+              <div class="w-full h-full relative">
+                ${{mobBlocksHtml}}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      setTimeout(() => {{
+        const box = document.getElementById("swimlane-canvas-box");
+        if (box) {{
+          box.onclick = (e) => {{
+            const rect = box.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const pct = Math.max(0, Math.min(1, clickX / rect.width));
+            const pickedHour = Math.min(23, Math.floor(pct * 24));
+            selectHour(pickedHour);
+          }};
+        }}
+      }}, 50);
+
+      container.appendChild(swimlaneCard);
+
+      // 3. Concurrent Multitasking (Co-Use Sessions) Log
+      const overlapsCard = document.createElement("div");
+      overlapsCard.className = "p-3 sm:p-4 rounded-xl bg-[#080808] border border-[var(--border)] space-y-3";
+      
+      if (rawOverlaps.length === 0) {{
+        overlapsCard.innerHTML = `
+          <div class="flex items-center gap-2 pb-1 border-b border-[var(--border)]">
+            <span class="text-sm font-semibold text-[var(--foreground)]">⚡ Concurrent Multitasking (Co-Use Sessions)</span>
+            <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-[#141414] text-neutral-400 border border-[#222222]">0 Overlaps</span>
+          </div>
+          <div class="py-6 text-center text-xs text-neutral-500 font-mono space-y-1">
+            <div>No concurrent PC and Mobile sessions detected today.</div>
+            <div class="text-[11px] text-neutral-600">Workstation and phone were used at distinct, non-overlapping intervals.</div>
+          </div>
+        `;
+      }} else {{
+        let listRowsHtml = rawOverlaps.map((ov, idx) => {{
+          const pcSrc = ov.pc.source;
+          let pcBadge = "bg-sky-500/10 text-sky-400 border-sky-500/20";
+          if (pcSrc === "vscode") pcBadge = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+          else if (pcSrc === "desktop") pcBadge = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+
+          const sTime = formatTimeOfDay(ov.startSec);
+          const eTime = formatTimeOfDay(ov.endSec);
+
+          return `
+            <div class="p-2.5 rounded-lg bg-[#050505] border border-[#1a1a1a] hover:border-[#2a2a2a] transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+              <div class="flex items-start sm:items-center gap-2.5 min-w-0 flex-1">
+                <span class="font-mono text-neutral-500 font-bold text-xs w-5 shrink-0 pt-0.5 sm:pt-0">${{idx + 1}}.</span>
+                <span class="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/10 text-amber-300 border border-amber-500/20 shrink-0">
+                  ⚡ ${{formatSecs(ov.duration)}}
+                </span>
+                <div class="min-w-0 flex-1 space-y-1">
+                  <!-- PC Activity -->
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="text-[10px] font-mono px-1 py-0.2 rounded border uppercase font-semibold ${{pcBadge}} shrink-0">${{pcSrc}}</span>
+                    <span class="font-medium text-neutral-200 truncate" title="${{escapeHtml(ov.pc.title)}}">${{escapeHtml(ov.pc.title)}}</span>
+                  </div>
+                  <!-- Mobile Activity -->
+                  <div class="flex items-center gap-1.5 truncate">
+                    <span class="text-[10px] font-mono px-1 py-0.2 rounded border uppercase font-semibold bg-purple-500/10 text-purple-400 border-purple-500/20 shrink-0">mobile</span>
+                    <span class="font-medium text-purple-200 truncate" title="${{escapeHtml(ov.mob.title)}}">${{escapeHtml(ov.mob.title)}}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto font-mono text-xs">
+                <span class="text-neutral-400">${{sTime}} &ndash; ${{eTime}}</span>
+                <button onclick="selectHour(${{ov.hour}}); setHourlyViewMode('inspector');" class="px-2 py-1 rounded bg-[#121212] hover:bg-[#1a1a1a] text-sky-400 border border-[#222222] transition text-[11px]" title="Inspect hour ${{String(ov.hour).padStart(2, '0')}}:00">
+                  Hour ${{String(ov.hour).padStart(2, "0")}}:00 &rarr;
+                </button>
+              </div>
+            </div>
+          `;
+        }}).join("");
+
+        overlapsCard.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[var(--border)]">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold text-[var(--foreground)]">⚡ Concurrent Multitasking (Co-Use Sessions)</span>
+              <span class="px-2 py-0.5 rounded text-[11px] font-mono bg-amber-500/10 text-amber-300 border border-amber-500/20 font-bold">
+                ${{rawOverlaps.length}} co-use intervals (${{formatSecs(totalCoUseSec)}})
+              </span>
+            </div>
+            <div class="text-xs text-neutral-400 font-mono">
+              Instances where PC Workstation and Smartphone were used simultaneously
+            </div>
+          </div>
+
+          <div class="max-h-[360px] overflow-y-auto custom-scroll space-y-2 pt-1">
+            ${{listRowsHtml}}
+          </div>
+        `;
+      }}
+
+      container.appendChild(overlapsCard);
+    }}
+
     function setHourlyViewMode(mode) {{
       hourlyViewMode = mode;
       const inspectorView = document.getElementById("hourly-inspector-container");
+      const duallaneView = document.getElementById("hourly-duallane-container");
       const scheduleView = document.getElementById("hourly-schedule-container");
       const btnInspector = document.getElementById("btn-mode-inspector");
+      const btnDuallane = document.getElementById("btn-mode-duallane");
       const btnSchedule = document.getElementById("btn-mode-schedule");
 
+      if (inspectorView) inspectorView.classList.add("hidden");
+      if (duallaneView) duallaneView.classList.add("hidden");
+      if (scheduleView) scheduleView.classList.add("hidden");
+
+      [btnInspector, btnDuallane, btnSchedule].forEach(btn => {{
+        if (btn) btn.className = "px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition";
+      }});
+
       if (mode === "inspector") {{
-        inspectorView.classList.remove("hidden");
-        scheduleView.classList.add("hidden");
-        btnInspector.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
-        btnSchedule.className = "px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition";
-      }} else {{
-        inspectorView.classList.add("hidden");
-        scheduleView.classList.remove("hidden");
-        btnInspector.className = "px-2.5 py-1 rounded-md text-neutral-400 hover:text-white transition";
-        btnSchedule.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
+        if (inspectorView) inspectorView.classList.remove("hidden");
+        if (btnInspector) btnInspector.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
+      }} else if (mode === "duallane") {{
+        if (duallaneView) duallaneView.classList.remove("hidden");
+        if (btnDuallane) btnDuallane.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
+      }} else {{ // 'schedule'
+        if (scheduleView) scheduleView.classList.remove("hidden");
+        if (btnSchedule) btnSchedule.className = "px-2.5 py-1 rounded-md bg-[#222222] text-white border border-[#333333] transition";
       }}
     }}
 
@@ -1337,6 +1861,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       if (window.CURRENT_HOURLY_DATA) {{
         renderHourlyRhythmBars(window.CURRENT_HOURLY_DATA);
         renderHourlyInspector(window.CURRENT_HOURLY_DATA);
+        renderDualLaneSwimlane();
         renderHourlySchedule(window.CURRENT_HOURLY_DATA);
       }}
     }}

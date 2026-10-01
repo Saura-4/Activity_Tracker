@@ -932,4 +932,59 @@ class TestCrossDeviceOverlapAndInterleaving:
         assert report["summary"]["mobile_seconds"] == 10.0
 
 
+# =============================================================================
+# Requirement: Minimum Duration Filtering (Under 40s discarded)
+# =============================================================================
+class TestMinimumDurationFiltering:
+    def test_aggregate_events_filters_sub_40s_sessions(self):
+        """Sessions under 40 seconds should be excluded when min_session_duration=40.0."""
+        events = [
+            # 15s session -> should be filtered
+            make_browser_event(ts(10, 0, 0), ts(10, 0, 15), "quick-glance.com", "Quick Glance"),
+            # 50s session -> should be kept
+            make_browser_event(ts(10, 5, 0), ts(10, 5, 50), "deep-read.com", "Deep Read"),
+            # 20s + 25s merged session (same context, 2s gap) -> total 45s -> should be kept
+            make_vscode_event(ts(10, 10, 0), ts(10, 10, 20), "proj", "file.py", "python"),
+            make_vscode_event(ts(10, 10, 22), ts(10, 10, 47), "proj", "file.py", "python"),
+        ]
+
+        report = aggregate_events(events, merge_gap_seconds=30.0, min_session_duration=40.0)
+
+        # Only deep-read (50s) and merged vscode (45s) remain
+        assert report["summary"]["session_count"] == 2
+        assert len(report["timeline"]) == 2
+        domains = [d["domain"] for d in report["domains"]]
+        assert "quick-glance.com" not in domains
+        assert "deep-read.com" in domains
+        assert report["summary"]["total_active_seconds"] == 95.0
+
+    def test_storage_append_event_discards_sub_40s(self, tmp_path):
+        """Storage append_event should discard events with duration_seconds < min_duration_seconds."""
+        from collector.storage import append_event
+        from collector.config import Config
+
+        cfg = Config(data_directory=str(tmp_path), min_duration_seconds=40.0)
+
+        short_event = {
+            "id": "short-1",
+            "start": ts(10, 0, 0),
+            "end": ts(10, 0, 15),
+            "duration_seconds": 15.0,
+            "source": "browser",
+            "context": {"domain": "short.com"}
+        }
+        long_event = {
+            "id": "long-1",
+            "start": ts(10, 1, 0),
+            "end": ts(10, 2, 0),
+            "duration_seconds": 60.0,
+            "source": "browser",
+            "context": {"domain": "long.com"}
+        }
+
+        assert append_event(cfg, short_event) is False
+        assert append_event(cfg, long_event) is True
+
+
+
 

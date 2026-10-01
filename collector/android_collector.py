@@ -233,7 +233,7 @@ def parse_usagestats_events(
     dumpsys_text: str,
     device_tz: timezone,
     target_date: Optional[str] = None,
-    min_duration_seconds: float = 2.0,
+    min_duration_seconds: float = 40.0,
     ignored_packages: Optional[set] = None
 ) -> List[Dict[str, Any]]:
     """Parse discrete activity sessions from dumpsys usagestats event logs.
@@ -328,12 +328,11 @@ def sync_mobile_activity(
     target_date: Optional[str] = None,
     adb_path: Optional[str] = None,
     device_ip: Optional[str] = None,
-    port: int = 5555
+    port: int = 5555,
+    min_duration_seconds: Optional[float] = None
 ) -> Dict[str, Any]:
     """Extract mobile activity and sync into raw daily JSONL storage."""
     cfg = get_config()
-    raw_dir = Path(cfg["data_directory"]) / "raw" / "mobile"
-    raw_dir.mkdir(parents=True, exist_ok=True)
 
     if not adb_path:
         adb_path = find_adb_executable()
@@ -359,6 +358,11 @@ def sync_mobile_activity(
     if not target_date:
         target_date = datetime.now(dev_tz).strftime("%Y-%m-%d")
 
+    d = datetime.strptime(target_date, "%Y-%m-%d")
+    year = str(d.year)
+    month = d.strftime("%b").lower()
+    raw_dir = Path(cfg["data_directory"]) / "raw" / year / month / "daily"
+    raw_dir.mkdir(parents=True, exist_ok=True)
     raw_file = raw_dir / f"{target_date}.jsonl"
 
     print(f"Querying usagestats on device for date {target_date}...")
@@ -366,7 +370,8 @@ def sync_mobile_activity(
 
     # Ignored packages configuration
     ignored = set(android_cfg.get("ignore_packages", list(DEFAULT_IGNORED_PACKAGES)))
-    sessions = parse_usagestats_events(output, dev_tz, target_date=target_date, ignored_packages=ignored)
+    effective_min_dur = min_duration_seconds if min_duration_seconds is not None else float(cfg.get("min_duration_seconds", 40.0))
+    sessions = parse_usagestats_events(output, dev_tz, target_date=target_date, min_duration_seconds=effective_min_dur, ignored_packages=ignored)
 
     if not sessions:
         print(f"No mobile app sessions recorded for {target_date}.")
@@ -457,10 +462,11 @@ def main():
     parser.add_argument("--date", help="Target date YYYY-MM-DD (defaults to today)")
     parser.add_argument("--ip", help="Phone IP address override")
     parser.add_argument("--port", type=int, default=5555, help="Wireless ADB port (default 5555)")
+    parser.add_argument("--min-duration", type=float, default=None, help="Minimum session duration in seconds (default 40.0)")
     args = parser.parse_args()
 
     try:
-        sync_mobile_activity(target_date=args.date, device_ip=args.ip, port=args.port)
+        sync_mobile_activity(target_date=args.date, device_ip=args.ip, port=args.port, min_duration_seconds=args.min_duration)
     except Exception as e:
         print(f"Error during mobile sync: {e}", file=sys.stderr)
         sys.exit(1)

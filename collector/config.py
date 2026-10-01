@@ -12,6 +12,7 @@ class Config:
     collector_port: int = 8765
     strip_query_strings: bool = True
     session_merge_gap_seconds: float = 30.0
+    min_duration_seconds: float = 40.0
     android: Dict[str, Any] = None
 
     def __post_init__(self):
@@ -62,6 +63,8 @@ def get_config() -> Config:
                         config.strip_query_strings = data["strip_query_strings"]
                     if "session_merge_gap_seconds" in data:
                         config.session_merge_gap_seconds = float(data["session_merge_gap_seconds"])
+                    if "min_duration_seconds" in data:
+                        config.min_duration_seconds = float(data["min_duration_seconds"])
                     if "android" in data:
                         config.android = data["android"]
                 break

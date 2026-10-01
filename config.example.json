@@ -4,6 +4,7 @@
   "collector_port": 8765,
   "strip_query_strings": true,
   "session_merge_gap_seconds": 30.0,
+  "min_duration_seconds": 40.0,
   "android": {
     "enabled": true,
     "device_ip": "192.168.1.100",

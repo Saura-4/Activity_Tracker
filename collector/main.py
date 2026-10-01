@@ -33,6 +33,11 @@ async def handle_config(request):
 
 async def process_single_event(data):
     event = validate_and_create_event(data, config.strip_query_strings)
+    min_dur = getattr(config, "min_duration_seconds", 40.0)
+    if event.duration_seconds < min_dur:
+        logger.debug(f"Event dropped (duration {event.duration_seconds}s < {min_dur}s): {event.source}")
+        return {"status": "ignored", "reason": "duration_below_threshold", "id": event.id}
+
     evt_dict = dataclasses.asdict(event)
     is_new = append_event(config, evt_dict)
     

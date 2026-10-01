@@ -149,7 +149,7 @@ function endSession() {
     const durationSeconds = Math.floor(durationMs / 1000);
 
     const config = vscode.workspace.getConfiguration('activityTracker');
-    const minDuration = config.get<number>('minSessionDuration') || 1;
+    const minDuration = config.get<number>('minSessionDuration') ?? 40;
 
     if (durationSeconds >= minDuration) {
         let uuidStr = '';

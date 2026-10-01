@@ -352,6 +352,7 @@ def compute_union_seconds(intervals: List[Tuple[datetime, datetime]]) -> float:
 def aggregate_events(
     events: List[Dict[str, Any]],
     merge_gap_seconds: float = DEFAULT_SESSION_MERGE_GAP_SECONDS,
+    min_session_duration: float = 0.0,
 ) -> Dict[str, Any]:
     """Aggregate raw activity events into a structured, compact report.
     
@@ -365,6 +366,8 @@ def aggregate_events(
 
     report_tz = get_report_timezone(events)
     logical_sessions = sessionize_events(events, merge_gap_seconds=merge_gap_seconds)
+    if min_session_duration > 0:
+        logical_sessions = [s for s in logical_sessions if float(s.get("duration_seconds", 0.0)) >= min_session_duration]
     if not logical_sessions:
         return _empty_report()
 
@@ -683,21 +686,35 @@ def _empty_report() -> Dict[str, Any]:
 
 
 def read_day_events(data_directory: str, date_str: str) -> List[Dict[str, Any]]:
-    """Read events for a date from PC file (raw/YYYY-MM-DD.jsonl), Mobile file (raw/mobile/YYYY-MM-DD.jsonl), and Desktop file (raw/desktop/YYYY-MM-DD.jsonl)."""
-    raw_dir = Path(data_directory) / "raw"
+    """Read events for a date from structured raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl,
+    with backward-compatible fallback to legacy raw/ locations."""
     events = []
 
-    pc_file = raw_dir / f"{date_str}.jsonl"
-    if pc_file.exists():
-        events.extend(read_events(str(pc_file)))
+    # 1. Check structured directory: raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl
+    try:
+        d = date.fromisoformat(date_str)
+        year = str(d.year)
+        month = d.strftime("%b").lower()
+        structured_file = Path(data_directory) / "raw" / year / month / "daily" / f"{date_str}.jsonl"
+        if structured_file.exists():
+            events.extend(read_events(str(structured_file)))
+    except Exception:
+        structured_file = None
 
-    mobile_file = raw_dir / "mobile" / f"{date_str}.jsonl"
-    if mobile_file.exists():
-        events.extend(read_events(str(mobile_file)))
+    # 2. Check legacy paths for backward compatibility if structured file did not exist
+    raw_dir = Path(data_directory) / "raw"
+    if not events:
+        legacy_pc_file = raw_dir / f"{date_str}.jsonl"
+        if legacy_pc_file.exists():
+            events.extend(read_events(str(legacy_pc_file)))
 
-    desktop_file = raw_dir / "desktop" / f"{date_str}.jsonl"
-    if desktop_file.exists():
-        events.extend(read_events(str(desktop_file)))
+        legacy_mobile_file = raw_dir / "mobile" / f"{date_str}.jsonl"
+        if legacy_mobile_file.exists():
+            events.extend(read_events(str(legacy_mobile_file)))
+
+        legacy_desktop_file = raw_dir / "desktop" / f"{date_str}.jsonl"
+        if legacy_desktop_file.exists():
+            events.extend(read_events(str(legacy_desktop_file)))
 
     return events
 
@@ -706,23 +723,33 @@ def generate_single_day_report(
     config,
     date_str: str,
     merge_gap_seconds: Optional[float] = None,
+    min_session_duration: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Generate a daily report from the complete day's raw JSONL data.
     
-    Reads all events in raw/YYYY-MM-DD.jsonl (and raw/mobile/YYYY-MM-DD.jsonl)
+    Reads all events in raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl
     and fully materializes a fresh report. Overwrites previous reports cleanly.
     """
     if merge_gap_seconds is None:
         merge_gap_seconds = getattr(config, "session_merge_gap_seconds", DEFAULT_SESSION_MERGE_GAP_SECONDS)
+    if min_session_duration is None:
+        min_session_duration = getattr(config, "min_duration_seconds", 40.0)
 
-    filepath = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
-    mobile_filepath = Path(config.data_directory) / "raw" / "mobile" / f"{date_str}.jsonl"
-    print(f"Reading PC: {filepath}")
-    if mobile_filepath.exists():
-        print(f"Reading mobile: {mobile_filepath}")
+    try:
+        d = date.fromisoformat(date_str)
+        filepath = Path(config.data_directory) / "raw" / str(d.year) / d.strftime("%b").lower() / "daily" / f"{date_str}.jsonl"
+    except Exception:
+        filepath = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
+
+    if not filepath.exists():
+        legacy_path = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
+        if legacy_path.exists():
+            filepath = legacy_path
+
+    print(f"Reading: {filepath}")
 
     events = read_day_events(config.data_directory, date_str)
-    report = aggregate_events(events, merge_gap_seconds=merge_gap_seconds)
+    report = aggregate_events(events, merge_gap_seconds=merge_gap_seconds, min_session_duration=min_session_duration)
     report["generated_at"] = datetime.now().astimezone().isoformat()
     report["date"] = date_str
     return report
@@ -733,10 +760,13 @@ def generate_range_report(
     from_date: str,
     to_date: str,
     merge_gap_seconds: Optional[float] = None,
+    min_session_duration: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Generate an aggregate report for a date range."""
     if merge_gap_seconds is None:
         merge_gap_seconds = getattr(config, "session_merge_gap_seconds", DEFAULT_SESSION_MERGE_GAP_SECONDS)
+    if min_session_duration is None:
+        min_session_duration = getattr(config, "min_duration_seconds", 40.0)
 
     start = date.fromisoformat(from_date)
     end = date.fromisoformat(to_date)
@@ -747,14 +777,21 @@ def generate_range_report(
 
     while current <= end:
         date_str = current.isoformat()
-        filepath = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
-        mobile_filepath = Path(config.data_directory) / "raw" / "mobile" / f"{date_str}.jsonl"
+        try:
+            d = current
+            filepath = Path(config.data_directory) / "raw" / str(d.year) / d.strftime("%b").lower() / "daily" / f"{date_str}.jsonl"
+        except Exception:
+            filepath = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
+
+        if not filepath.exists():
+            legacy_path = Path(config.data_directory) / "raw" / f"{date_str}.jsonl"
+            if legacy_path.exists():
+                filepath = legacy_path
+
         print(f"Reading: {filepath}")
-        if mobile_filepath.exists():
-            print(f"Reading mobile: {mobile_filepath}")
 
         events = read_day_events(config.data_directory, date_str)
-        day_report = aggregate_events(events, merge_gap_seconds=merge_gap_seconds)
+        day_report = aggregate_events(events, merge_gap_seconds=merge_gap_seconds, min_session_duration=min_session_duration)
         daily_summaries.append({
             "date": date_str,
             **day_report["summary"],
@@ -763,7 +800,7 @@ def generate_range_report(
         all_events.extend(events)
         current += timedelta(days=1)
 
-    report = aggregate_events(all_events, merge_gap_seconds=merge_gap_seconds)
+    report = aggregate_events(all_events, merge_gap_seconds=merge_gap_seconds, min_session_duration=min_session_duration)
     report["generated_at"] = datetime.now().astimezone().isoformat()
     report["from"] = from_date
     report["to"] = to_date
@@ -925,6 +962,10 @@ def main():
         "--merge-gap", dest="merge_gap", type=float, default=None,
         help="Maximum gap in seconds between consecutive events of same context to merge (default from config or 30)",
     )
+    parser.add_argument(
+        "--min-duration", dest="min_duration", type=float, default=None,
+        help="Minimum session duration in seconds to include in report (default from config or 40.0)",
+    )
 
     args = parser.parse_args()
 
@@ -935,17 +976,21 @@ def main():
     if merge_gap is None:
         merge_gap = getattr(config, "session_merge_gap_seconds", DEFAULT_SESSION_MERGE_GAP_SECONDS)
 
+    min_dur = args.min_duration
+    if min_dur is None:
+        min_dur = getattr(config, "min_duration_seconds", 40.0)
+
     is_weekly = False
     if args.weekly:
         end_d = date.today()
         start_d = end_d - timedelta(days=6)
-        report = generate_range_report(config, start_d.isoformat(), end_d.isoformat(), merge_gap_seconds=merge_gap)
+        report = generate_range_report(config, start_d.isoformat(), end_d.isoformat(), merge_gap_seconds=merge_gap, min_session_duration=min_dur)
         week_num = end_d.isocalendar()[1]
         filename = f"{end_d.year}-W{week_num:02d}.json"
         is_weekly = True
     elif args.yesterday:
         target_date = (date.today() - timedelta(days=1)).isoformat()
-        report = generate_single_day_report(config, target_date, merge_gap_seconds=merge_gap)
+        report = generate_single_day_report(config, target_date, merge_gap_seconds=merge_gap, min_session_duration=min_dur)
         filename = f"{target_date}.json"
     elif args.from_date and args.to_date:
         try:
@@ -957,7 +1002,7 @@ def main():
         if d1 > d2:
             parser.error("--from date must be before --to date")
 
-        report = generate_range_report(config, args.from_date, args.to_date, merge_gap_seconds=merge_gap)
+        report = generate_range_report(config, args.from_date, args.to_date, merge_gap_seconds=merge_gap, min_session_duration=min_dur)
         filename = f"{args.from_date}_to_{args.to_date}.json"
         is_weekly = True
     else:
@@ -968,7 +1013,7 @@ def main():
         except ValueError:
             parser.error(f"Invalid date format: {target_date}. Use YYYY-MM-DD.")
 
-        report = generate_single_day_report(config, target_date, merge_gap_seconds=merge_gap)
+        report = generate_single_day_report(config, target_date, merge_gap_seconds=merge_gap, min_session_duration=min_dur)
         filename = f"{target_date}.json"
 
     write_report(config, report, filename)

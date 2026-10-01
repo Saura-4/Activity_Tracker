@@ -1,7 +1,7 @@
 // Configuration defaults
 const DEFAULT_SETTINGS = {
   collectorUrl: 'http://127.0.0.1:8765',
-  minDuration: 1,
+  minDuration: 40,
   trackInternal: false,
   stripParams: true
 };

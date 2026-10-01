@@ -24,7 +24,7 @@
         },
         "activityTracker.minSessionDuration": {
           "type": "number",
-          "default": 1,
+          "default": 40,
           "description": "Minimum session duration in seconds to record"
         }
       }

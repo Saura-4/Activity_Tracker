@@ -166,6 +166,9 @@ def get_idle_seconds() -> float:
 
 def emit_desktop_event(event: Dict[str, Any], collector_url: str, data_directory: str):
     """Deliver desktop event to collector HTTP endpoint, or append to raw/desktop/ if offline."""
+    if float(event.get("duration_seconds", 0.0)) < 40.0:
+        return
+
     # Attempt HTTP delivery first (thread-safe centralized queue)
     delivered = False
     try:
@@ -180,12 +183,14 @@ def emit_desktop_event(event: Dict[str, Any], collector_url: str, data_directory
     except Exception:
         delivered = False
 
-    # If collector is offline or not running, write to separate raw/desktop/ file
+    # If collector is offline or not running, write to structured raw daily file
     if not delivered:
         try:
-            start_dt = datetime.fromisoformat(event["start"])
+            start_dt = datetime.fromisoformat(event["start"].replace('Z', '+00:00'))
             date_str = start_dt.strftime("%Y-%m-%d")
-            out_dir = Path(data_directory) / "raw" / "desktop"
+            year = str(start_dt.year)
+            month = start_dt.strftime("%b").lower()
+            out_dir = Path(data_directory) / "raw" / year / month / "daily"
             out_dir.mkdir(parents=True, exist_ok=True)
             out_file = out_dir / f"{date_str}.jsonl"
             with open(out_file, "a", encoding="utf-8") as f:
@@ -203,7 +208,7 @@ class DesktopWatcher:
         data_directory: str = "S:\\project\\AW\\Record",
         idle_threshold_seconds: float = 300.0,  # 5 minutes
         poll_interval: float = 1.0,
-        min_session_duration: float = 2.0
+        min_session_duration: float = 40.0
     ):
         self.collector_url = collector_url
         self.data_directory = data_directory
@@ -339,7 +344,8 @@ def run_standalone():
     cfg = get_config()
     collector_url = f"http://{cfg.collector_host}:{cfg.collector_port}"
     data_dir = cfg.data_directory
-    watcher = DesktopWatcher(collector_url=collector_url, data_directory=data_dir)
+    min_dur = getattr(cfg, "min_duration_seconds", 40.0)
+    watcher = DesktopWatcher(collector_url=collector_url, data_directory=data_dir, min_session_duration=min_dur)
     try:
         watcher.start()
     except KeyboardInterrupt:
