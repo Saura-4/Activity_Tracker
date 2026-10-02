@@ -986,5 +986,155 @@ class TestMinimumDurationFiltering:
         assert append_event(cfg, long_event) is True
 
 
+# =============================================================================
+# Test: Manual Offline Activities & Unobserved Gap Detection
+# =============================================================================
+class TestManualActivityAndGapAnnotation:
+    def test_manual_model_validation(self):
+        """Event validation accepts 'manual' source."""
+        from collector.models import validate_and_create_event
+        data = {
+            "start": ts(13, 0),
+            "end": ts(15, 0),
+            "duration_seconds": 7200,
+            "source": "manual",
+            "context": {"activity": "Afternoon nap", "category": "rest"}
+        }
+        evt = validate_and_create_event(data)
+        assert evt.source == "manual"
+        assert evt.context["activity"] == "Afternoon nap"
+
+    def test_manual_storage_parsing_and_inference(self, tmp_path):
+        """create_manual_event and parse_text_line parse shorthand and infer category."""
+        from collector.manual_storage import parse_text_line, infer_category, save_manual_event, read_manual_events
+
+        assert infer_category("Afternoon nap") == "rest"
+        assert infer_category("Quick lunch") == "meal"
+        assert infer_category("Gym workout") == "fitness"
+
+        evt = parse_text_line("13:00 - 15:00 | Afternoon nap", "2026-09-29")
+        assert evt is not None
+        assert evt["source"] == "manual"
+        assert evt["duration_seconds"] == 7200.0
+        assert evt["context"]["activity"] == "Afternoon nap"
+        assert evt["context"]["category"] == "rest"
+
+        # Save and read back
+        save_manual_event(str(tmp_path), "2026-09-29", evt)
+        loaded = read_manual_events(str(tmp_path), "2026-09-29")
+        assert len(loaded) == 1
+        assert loaded[0]["context"]["activity"] == "Afternoon nap"
+
+    def test_aggregate_events_with_manual_activity(self):
+        """Screen time and manual offline time are separated and accounted cleanly."""
+        from collector.manual_storage import create_manual_event
+
+        events = [
+            # 1 hour of VS Code
+            make_vscode_event(ts(10, 0), ts(11, 0), "RAG-Studio", "main.py", "python"),
+            # 2 hours of Afternoon Nap
+            create_manual_event("2026-09-29", "13:00", "15:00", "Afternoon nap", "rest"),
+        ]
+
+        report = aggregate_events(events)
+
+        # Screen time is strictly 1 hour
+        assert report["summary"]["total_active_seconds"] == 3600.0
+        assert report["summary"]["screen_seconds"] == 3600.0
+        assert report["summary"]["vscode_seconds"] == 3600.0
+
+        # Manual time is 2 hours
+        assert report["summary"]["manual_seconds"] == 7200.0
+        # Total accounted union = 3600 + 7200 = 10800
+        assert report["summary"]["total_accounted_seconds"] == 10800.0
+        assert report["summary"]["unobserved_seconds"] == 86400.0 - 10800.0
+
+        # Manual activities table
+        assert len(report["manual_activities"]) == 1
+        assert report["manual_activities"][0]["activity"] == "Afternoon nap"
+        assert report["manual_activities"][0]["duration_seconds"] == 7200.0
+
+        # Timeline has 2 sessions
+        assert len(report["timeline"]) == 2
+        sources = [t["source"] for t in report["timeline"]]
+        assert "vscode" in sources
+        assert "manual" in sources
+
+    def test_overlap_between_manual_nap_and_quick_mobile_check(self):
+        """A quick 2-minute mobile check during a 2-hour nap does not double count union time."""
+        from collector.manual_storage import create_manual_event
+        from tests.conftest import make_mobile_event
+
+        events = [
+            create_manual_event("2026-09-29", "13:00", "15:00", "Afternoon nap", "rest"),
+            make_mobile_event(ts(13, 30), ts(13, 32), "WhatsApp", "com.whatsapp"), # 2 min = 120s
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["screen_seconds"] == 120.0
+        assert report["summary"]["mobile_seconds"] == 120.0
+        assert report["summary"]["manual_seconds"] == 7200.0
+        # Sweep line union covers 13:00 to 15:00 = 7200s
+        assert report["summary"]["total_accounted_seconds"] == 7200.0
+
+    def test_find_unobserved_gaps(self):
+        """Gap detector finds unobserved periods between active sessions."""
+        from reporting.annotate_gaps import find_unobserved_gaps
+        from reporting.generate_report import get_report_timezone
+
+        events = [
+            make_vscode_event(ts(10, 0), ts(11, 0), "RAG-Studio", "main.py", "python"),
+            make_vscode_event(ts(13, 0), ts(14, 0), "RAG-Studio", "eval.py", "python"),
+        ]
+        tz = get_report_timezone(events)
+        gaps = find_unobserved_gaps(events, "2026-09-29", tz, min_gap_seconds=30 * 60, include_day_boundaries=False)
+
+        # There is a 2-hour gap between 11:00 and 13:00
+        assert len(gaps) == 1
+        assert gaps[0]["duration_seconds"] == 7200.0
+
+    def test_manual_event_seconds_precision(self):
+        """Manual activity parses and retains exact seconds without losing them."""
+        from collector.manual_storage import parse_time_str, create_manual_event, parse_text_line
+
+        h, m, s = parse_time_str("23:25:51")
+        assert (h, m, s) == (23, 25, 51)
+
+        # Event creation
+        evt = create_manual_event("2026-10-01", "23:25:51", "23:44:23", "Walk", "fitness")
+        assert evt["start"] == "2026-10-01T23:25:51+05:30"
+        assert evt["end"] == "2026-10-01T23:44:23+05:30"
+        assert evt["duration_seconds"] == 1112.0  # 18 minutes 32 seconds
+
+        # Text line parsing
+        parsed = parse_text_line("23:25:51 - 23:44:23: Walk", "2026-10-01")
+        assert parsed is not None
+        assert parsed["duration_seconds"] == 1112.0
+        assert parsed["context"]["activity"] == "Walk"
+
+    def test_manual_hourly_separation(self):
+        """Hours with only manual events report 0 active screen time in hourly breakdown."""
+        from collector.manual_storage import create_manual_event
+
+        events = [
+            create_manual_event("2026-10-01", "02:00:00", "10:00:00", "Sleep", "rest"),
+            make_vscode_event(ts(10, 15, 0), ts(10, 45, 0), "AW", "main.py", "python"),
+        ]
+
+        report = aggregate_events(events)
+        hourly = {h["hour"]: h for h in report.get("hourly_breakdown", [])}
+
+        # Hours 2 through 9 must have active_seconds == 0.0 and manual_seconds == 3600.0
+        for h in range(2, 10):
+            assert hourly[h]["active_seconds"] == 0.0
+            assert hourly[h]["manual_seconds"] == 3600.0
+
+        # Hour 10 has screen active time
+        assert hourly[10]["active_seconds"] == 1800.0
+
+
+
+
 
 

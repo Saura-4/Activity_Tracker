@@ -38,3 +38,5 @@ config.json
 .pytest_cache/
 htmlcov/
 .coverage
+
+.env

@@ -19,7 +19,7 @@ def validate_and_create_event(data: Dict[str, Any], strip_queries: bool = True) 
         if r not in data:
             raise ValueError(f"Missing required field: {r}")
             
-    if data["source"] not in ["browser", "vscode", "mobile", "desktop"]:
+    if data["source"] not in ["browser", "vscode", "mobile", "desktop", "manual"]:
         raise ValueError(f"Invalid source: {data['source']}")
         
     dur = float(data["duration_seconds"])

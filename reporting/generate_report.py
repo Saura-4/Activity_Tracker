@@ -171,6 +171,12 @@ def get_context_key(event: Dict[str, Any]) -> Tuple:
             ctx.get("app"),
             ctx.get("title"),
         )
+    elif source == "manual":
+        return (
+            "manual",
+            ctx.get("activity") or ctx.get("title"),
+            ctx.get("category"),
+        )
     return (source, tuple(sorted((k, str(v)) for k, v in ctx.items())))
 
 
@@ -303,6 +309,17 @@ def clean_context_for_report(source: str, ctx: Dict[str, Any]) -> Dict[str, Any]
         if "title" in ctx:
             clean["title"] = ctx["title"]
         return clean
+    elif source == "manual":
+        clean = {}
+        if "activity" in ctx:
+            clean["activity"] = ctx["activity"]
+        elif "title" in ctx:
+            clean["activity"] = ctx["title"]
+        if "category" in ctx:
+            clean["category"] = ctx["category"]
+        if "notes" in ctx and ctx["notes"]:
+            clean["notes"] = ctx["notes"]
+        return clean
     return {k: v for k, v in ctx.items() if k not in ("url", "tab_id", "window_id")}
 
 
@@ -376,15 +393,18 @@ def aggregate_events(
     vscode_seconds = 0.0
     mobile_seconds = 0.0
     desktop_seconds = 0.0
+    manual_seconds = 0.0
 
     # Collect all time intervals for wall-clock union calculation
     all_intervals = []
+    screen_intervals = []
 
     source_counts = defaultdict(lambda: {"duration": 0.0, "count": 0})
     domain_stats = defaultdict(lambda: {"duration": 0.0, "count": 0})
     title_stats = defaultdict(lambda: {"duration": 0.0, "count": 0, "domain": ""})
     app_stats = defaultdict(lambda: {"duration": 0.0, "count": 0, "package": ""})
     desktop_app_stats = defaultdict(lambda: {"duration": 0.0, "count": 0})
+    manual_activity_stats = defaultdict(lambda: {"duration": 0.0, "count": 0, "category": ""})
     workspace_stats = defaultdict(lambda: {
         "duration": 0.0,
         "count": 0,
@@ -392,7 +412,7 @@ def aggregate_events(
         "files": set(),
     })
     language_stats = defaultdict(lambda: {"duration": 0.0, "count": 0})
-    hourly = defaultdict(lambda: {"active": 0.0, "browser": 0.0, "vscode": 0.0, "mobile": 0.0, "desktop": 0.0})
+    hourly = defaultdict(lambda: {"active": 0.0, "browser": 0.0, "vscode": 0.0, "mobile": 0.0, "desktop": 0.0, "manual": 0.0})
 
     timeline = []
 
@@ -405,6 +425,8 @@ def aggregate_events(
         # Collect raw event intervals for wall-clock union (cross-device de-overlap without gap inflation)
         for raw_e in s["raw_events"]:
             all_intervals.append((raw_e["_start_dt"], raw_e["_end_dt"]))
+            if source != "manual":
+                screen_intervals.append((raw_e["_start_dt"], raw_e["_end_dt"]))
 
         source_counts[source]["duration"] += dur
         source_counts[source]["count"] += 1
@@ -448,6 +470,14 @@ def aggregate_events(
             desktop_app_stats[app]["duration"] += dur
             desktop_app_stats[app]["count"] += 1
 
+        elif source == "manual":
+            manual_seconds += dur
+            act = ctx.get("activity") or ctx.get("title", "Offline Activity")
+            cat = ctx.get("category", "other")
+            manual_activity_stats[act]["duration"] += dur
+            manual_activity_stats[act]["count"] += 1
+            manual_activity_stats[act]["category"] = cat
+
         # Hourly breakdown: bucket each raw event's active duration into hours
         for raw_e in s["raw_events"]:
             try:
@@ -455,15 +485,18 @@ def aggregate_events(
                 raw_end_local = raw_e["_end_dt"].astimezone(report_tz)
                 hour_buckets = split_duration_by_hour(raw_start_local, raw_end_local)
                 for h, secs in hour_buckets.items():
-                    hourly[h]["active"] += secs
-                    if source == "browser":
-                        hourly[h]["browser"] += secs
-                    elif source == "vscode":
-                        hourly[h]["vscode"] += secs
-                    elif source == "mobile":
-                        hourly[h]["mobile"] += secs
-                    elif source == "desktop":
-                        hourly[h]["desktop"] += secs
+                    if source == "manual":
+                        hourly[h]["manual"] += secs
+                    else:
+                        hourly[h]["active"] += secs
+                        if source == "browser":
+                            hourly[h]["browser"] += secs
+                        elif source == "vscode":
+                            hourly[h]["vscode"] += secs
+                        elif source == "mobile":
+                            hourly[h]["mobile"] += secs
+                        elif source == "desktop":
+                            hourly[h]["desktop"] += secs
             except Exception:
                 pass
 
@@ -483,17 +516,22 @@ def aggregate_events(
 
     # Compute total active time using interval union (prevents double-counting
     # when PC and mobile sessions overlap in time)
-    total_seconds = compute_union_seconds(all_intervals)
+    screen_seconds = compute_union_seconds(screen_intervals) if screen_intervals else 0.0
+    total_accounted_seconds = compute_union_seconds(all_intervals) if all_intervals else 0.0
+    total_seconds = screen_seconds if screen_intervals or not all_intervals else total_accounted_seconds
+    unobserved_seconds = max(0.0, 86400.0 - total_accounted_seconds)
 
     # Per-source seconds (naive sums — they represent time on that specific device)
     browser_seconds = source_counts.get("browser", {}).get("duration", 0.0)
     vscode_seconds = source_counts.get("vscode", {}).get("duration", 0.0)
     mobile_seconds = source_counts.get("mobile", {}).get("duration", 0.0)
     desktop_seconds = source_counts.get("desktop", {}).get("duration", 0.0)
+    manual_seconds = source_counts.get("manual", {}).get("duration", 0.0)
 
     # Cap hourly active_seconds at 3600 (can't have more than 60 min in an hour)
     for h in hourly:
         hourly[h]["active"] = min(3600.0, hourly[h]["active"])
+        hourly[h]["manual"] = min(3600.0, hourly[h]["manual"])
     observed_span_seconds = max(0.0, (latest_end - earliest_start).total_seconds())
 
     # Calculate actual logical context switches
@@ -502,6 +540,8 @@ def aggregate_events(
         if logical_sessions[i]["context_key"] != logical_sessions[i + 1]["context_key"]:
             context_switches += 1
 
+    base_calc_seconds = screen_seconds if screen_seconds > 0 else total_seconds
+
     # Sorted aggregations
     domains = sorted(
         [
@@ -509,7 +549,7 @@ def aggregate_events(
                 "domain": d,
                 "duration_seconds": round(st["duration"], 1),
                 "session_count": st["count"],
-                "percentage": round(st["duration"] / total_seconds * 100, 1) if total_seconds > 0 else 0,
+                "percentage": round(st["duration"] / base_calc_seconds * 100, 1) if base_calc_seconds > 0 else 0,
             }
             for d, st in domain_stats.items()
         ],
@@ -567,7 +607,7 @@ def aggregate_events(
                 "package": st["package"],
                 "duration_seconds": round(st["duration"], 1),
                 "session_count": st["count"],
-                "percentage": round(st["duration"] / total_seconds * 100, 1) if total_seconds > 0 else 0,
+                "percentage": round(st["duration"] / base_calc_seconds * 100, 1) if base_calc_seconds > 0 else 0,
             }
             for a, st in app_stats.items()
         ],
@@ -581,7 +621,7 @@ def aggregate_events(
                 "app": a,
                 "duration_seconds": round(st["duration"], 1),
                 "session_count": st["count"],
-                "percentage": round(st["duration"] / total_seconds * 100, 1) if total_seconds > 0 else 0,
+                "percentage": round(st["duration"] / base_calc_seconds * 100, 1) if base_calc_seconds > 0 else 0,
             }
             for a, st in desktop_app_stats.items()
         ],
@@ -597,7 +637,21 @@ def aggregate_events(
         for src, st in source_counts.items()
     }
 
-    # Top 10 longest logical sessions (clean context)
+    manual_activities = sorted(
+        [
+            {
+                "activity": act,
+                "category": st["category"],
+                "duration_seconds": round(st["duration"], 1),
+                "session_count": st["count"],
+            }
+            for act, st in manual_activity_stats.items()
+        ],
+        key=lambda x: x["duration_seconds"],
+        reverse=True,
+    )
+
+    # Top 10 longest logical sessions (clean context, screen sessions only)
     longest_sessions = sorted(
         [
             {
@@ -609,6 +663,7 @@ def aggregate_events(
                 "raw_event_count": s["raw_event_count"],
             }
             for s in logical_sessions
+            if s["source"] != "manual"
         ],
         key=lambda x: x["duration_seconds"],
         reverse=True,
@@ -623,6 +678,7 @@ def aggregate_events(
                 "vscode_seconds": round(st["vscode"], 1),
                 "mobile_seconds": round(st["mobile"], 1),
                 "desktop_seconds": round(st["desktop"], 1),
+                "manual_seconds": round(st["manual"], 1),
             }
             for h, st in hourly.items()
         ],
@@ -632,10 +688,14 @@ def aggregate_events(
     return {
         "summary": {
             "total_active_seconds": round(total_seconds, 1),
+            "screen_seconds": round(screen_seconds, 1),
             "browser_seconds": round(browser_seconds, 1),
             "vscode_seconds": round(vscode_seconds, 1),
             "mobile_seconds": round(mobile_seconds, 1),
             "desktop_seconds": round(desktop_seconds, 1),
+            "manual_seconds": round(manual_seconds, 1),
+            "total_accounted_seconds": round(total_accounted_seconds, 1),
+            "unobserved_seconds": round(unobserved_seconds, 1),
             "session_count": len(logical_sessions),
             "context_switches": context_switches,
             "first_activity": earliest_start.astimezone(report_tz).isoformat(),
@@ -650,6 +710,7 @@ def aggregate_events(
         "languages": languages,
         "apps": apps,
         "desktop_apps": desktop_apps,
+        "manual_activities": manual_activities,
         "longest_sessions": longest_sessions,
         "timeline": timeline,
         "hourly_breakdown": hourly_breakdown,
@@ -661,10 +722,14 @@ def _empty_report() -> Dict[str, Any]:
     return {
         "summary": {
             "total_active_seconds": 0.0,
+            "screen_seconds": 0.0,
             "browser_seconds": 0.0,
             "vscode_seconds": 0.0,
             "mobile_seconds": 0.0,
             "desktop_seconds": 0.0,
+            "manual_seconds": 0.0,
+            "total_accounted_seconds": 0.0,
+            "unobserved_seconds": 86400.0,
             "session_count": 0,
             "context_switches": 0,
             "first_activity": None,
@@ -679,6 +744,7 @@ def _empty_report() -> Dict[str, Any]:
         "languages": [],
         "apps": [],
         "desktop_apps": [],
+        "manual_activities": [],
         "longest_sessions": [],
         "timeline": [],
         "hourly_breakdown": [],
@@ -687,7 +753,8 @@ def _empty_report() -> Dict[str, Any]:
 
 def read_day_events(data_directory: str, date_str: str) -> List[Dict[str, Any]]:
     """Read events for a date from structured raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl,
-    with backward-compatible fallback to legacy raw/ locations."""
+    with backward-compatible fallback to legacy raw/ locations, and merges
+    manual offline activities from Record/manual/..."""
     events = []
 
     # 1. Check structured directory: raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl
@@ -715,6 +782,15 @@ def read_day_events(data_directory: str, date_str: str) -> List[Dict[str, Any]]:
         legacy_desktop_file = raw_dir / "desktop" / f"{date_str}.jsonl"
         if legacy_desktop_file.exists():
             events.extend(read_events(str(legacy_desktop_file)))
+
+    # 3. Read manual offline activities from Record/manual/...
+    try:
+        from collector.manual_storage import read_manual_events
+        manual_evts = read_manual_events(data_directory, date_str)
+        if manual_evts:
+            events.extend(manual_evts)
+    except Exception:
+        pass
 
     return events
 

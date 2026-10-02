@@ -184,11 +184,68 @@ async def handle_generate_report(request):
             "message": str(e)
         }, status=500, headers=cors_headers())
 
+async def handle_manual_event(request):
+    try:
+        data = await request.json()
+        from datetime import datetime
+        date_str = data.get("date") or datetime.now().strftime("%Y-%m-%d")
+        start_time = data.get("start")
+        end_time = data.get("end")
+        activity = data.get("activity") or data.get("title")
+        category = data.get("category")
+        notes = data.get("notes", "")
+
+        if not start_time or not end_time or not activity:
+            raise ValueError("Required fields: 'start', 'end', 'activity' (or 'title')")
+
+        from collector.manual_storage import create_manual_event, save_manual_event
+        evt = create_manual_event(date_str, start_time, end_time, activity, category, notes)
+        saved_path = save_manual_event(config.data_directory, date_str, evt)
+
+        # Trigger automatic report and dashboard regeneration
+        import asyncio
+        import importlib
+        import reporting.generate_report
+        import reporting.generate_dashboard
+        importlib.reload(reporting.generate_report)
+        importlib.reload(reporting.generate_dashboard)
+        from reporting.generate_report import generate_single_day_report, write_report
+        from reporting.generate_dashboard import generate_dashboard_files
+
+        report = await asyncio.to_thread(generate_single_day_report, config, date_str)
+        await asyncio.to_thread(write_report, config, report, f"{date_str}.json")
+        await asyncio.to_thread(generate_dashboard_files, config.data_directory)
+
+        return web.json_response({
+            "status": "ok",
+            "message": f"Manual activity '{activity}' logged for {date_str}",
+            "event": evt,
+            "saved_to": saved_path,
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"Error logging manual event: {e}")
+        return web.json_response({"status": "error", "message": str(e)}, status=400, headers=cors_headers())
+
+async def handle_get_manual(request):
+    try:
+        from datetime import datetime
+        date_str = request.query.get("date") or datetime.now().strftime("%Y-%m-%d")
+        from collector.manual_storage import read_manual_events
+        events = read_manual_events(config.data_directory, date_str)
+        return web.json_response({
+            "status": "ok",
+            "date": date_str,
+            "events": events
+        }, headers=cors_headers())
+    except Exception as e:
+        logger.error(f"Error fetching manual events: {e}")
+        return web.json_response({"status": "error", "message": str(e)}, status=400, headers=cors_headers())
+
 async def handle_root(request):
     return web.json_response({
         "status": "ok",
         "service": "Activity Tracker Collector",
-        "endpoints": ["GET /health", "GET /config", "POST /event", "POST /events", "POST /api/sync-mobile", "POST /api/generate-report"]
+        "endpoints": ["GET /health", "GET /config", "POST /event", "POST /events", "POST /api/sync-mobile", "POST /api/generate-report", "POST /api/manual", "GET /api/manual"]
     }, headers=cors_headers())
 
 app = web.Application()
@@ -200,6 +257,8 @@ app.router.add_post('/event', handle_event)
 app.router.add_post('/events', handle_events)
 app.router.add_post('/api/sync-mobile', handle_sync_mobile)
 app.router.add_post('/api/generate-report', handle_generate_report)
+app.router.add_post('/api/manual', handle_manual_event)
+app.router.add_get('/api/manual', handle_get_manual)
 
 def main():
     logger.info(f"Starting collector on {config.collector_host}:{config.collector_port}")
