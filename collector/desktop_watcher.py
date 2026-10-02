@@ -165,8 +165,9 @@ def get_idle_seconds() -> float:
 
 
 def emit_desktop_event(event: Dict[str, Any], collector_url: str, data_directory: str):
-    """Deliver desktop event to collector HTTP endpoint, or append to raw/desktop/ if offline."""
-    if float(event.get("duration_seconds", 0.0)) < 2.0:
+    """Deliver desktop event to collector HTTP endpoint, or append to raw daily file if offline."""
+    raw_min = getattr(get_config(), "raw_min_duration_seconds", 2.0)
+    if float(event.get("duration_seconds", 0.0)) < raw_min:
         return
 
     # Attempt HTTP delivery first (thread-safe centralized queue)
@@ -221,12 +222,17 @@ class DesktopWatcher:
         self.min_session_duration = min_session_duration
 
         self.running = False
-        self.current_session = None  # {app, title, proc_name, start_dt, key, title_durations, last_title, last_title_time}
+        self.current_session = None  # {id, app, title, proc_name, start_dt, key, title_durations, last_title, last_title_time, last_checkpoint_mono}
         self.is_idle = False
         self.idle_start_dt = None
         self.is_locked = False
         self.lock_start_dt = None
         self._last_tick_mono = None
+
+        # Untracked foreground interval tracking
+        self.untracked_start_dt = None
+        self.untracked_id = None
+        self.untracked_last_checkpoint_mono = None
 
     def start(self):
         """Start the desktop watching loop."""
@@ -246,9 +252,47 @@ class DesktopWatcher:
         """Stop watching and flush current session."""
         self.running = False
         self._end_current_session()
+        self._end_untracked_session()
+
+    def _checkpoint_current_session(self):
+        """Emit periodic checkpoint for ongoing session with deterministic ID."""
+        if not self.current_session:
+            return
+
+        now_dt = datetime.now().astimezone()
+        now_mono = time.monotonic()
+        start_dt = self.current_session["start_dt"]
+        duration = (now_dt - start_dt).total_seconds()
+
+        if duration >= self.min_session_duration:
+            if "last_title" in self.current_session and "last_title_time" in self.current_session:
+                dt = max(0.0, now_mono - self.current_session["last_title_time"])
+                self.current_session["title_durations"][self.current_session["last_title"]] = (
+                    self.current_session["title_durations"].get(self.current_session["last_title"], 0.0) + dt
+                )
+                self.current_session["last_title_time"] = now_mono
+
+            best_title = self.current_session.get("title", "")
+            if self.current_session.get("title_durations"):
+                best_title = max(self.current_session["title_durations"].items(), key=lambda x: x[1])[0]
+
+            event = {
+                "id": self.current_session["id"],
+                "start": start_dt.isoformat(),
+                "end": now_dt.isoformat(),
+                "duration_seconds": round(duration, 1),
+                "source": "desktop",
+                "context": {
+                    "app": self.current_session["app"],
+                    "title": best_title,
+                    "proc_name": self.current_session.get("proc_name", "")
+                }
+            }
+            emit_desktop_event(event, self.collector_url, self.data_directory)
+            self.current_session["last_checkpoint_mono"] = now_mono
 
     def _end_current_session(self, explicit_end_time: Optional[datetime] = None):
-        """End the current active session and emit event."""
+        """End the current active session and emit final event."""
         if not self.current_session:
             return
 
@@ -260,7 +304,9 @@ class DesktopWatcher:
         now_mono = time.monotonic()
         if "last_title" in self.current_session and "last_title_time" in self.current_session:
             dt = max(0.0, now_mono - self.current_session["last_title_time"])
-            self.current_session["title_durations"][self.current_session["last_title"]] += dt
+            self.current_session["title_durations"][self.current_session["last_title"]] = (
+                self.current_session["title_durations"].get(self.current_session["last_title"], 0.0) + dt
+            )
 
         best_title = self.current_session.get("title", "")
         if self.current_session.get("title_durations"):
@@ -269,11 +315,9 @@ class DesktopWatcher:
         if duration >= self.min_session_duration:
             start_iso = start_dt.isoformat()
             end_iso = now_dt.isoformat()
-            clean_ts = start_iso.replace(":", "-").replace("+", "_")
-            clean_app = self.current_session["app"].replace(" ", "_").lower()
 
             event = {
-                "id": f"desktop-{clean_app}-{clean_ts}",
+                "id": self.current_session["id"],
                 "start": start_iso,
                 "end": end_iso,
                 "duration_seconds": round(duration, 1),
@@ -287,6 +331,29 @@ class DesktopWatcher:
             emit_desktop_event(event, self.collector_url, self.data_directory)
 
         self.current_session = None
+
+    def _end_untracked_session(self, now_dt: Optional[datetime] = None):
+        """End current untracked foreground session and emit explicit event."""
+        if not self.untracked_start_dt:
+            return
+        now_dt = now_dt or datetime.now().astimezone()
+        dur = (now_dt - self.untracked_start_dt).total_seconds()
+        if dur >= self.min_session_duration:
+            event = {
+                "id": self.untracked_id,
+                "start": self.untracked_start_dt.isoformat(),
+                "end": now_dt.isoformat(),
+                "duration_seconds": round(dur, 1),
+                "source": "desktop",
+                "context": {
+                    "status": "no_tracked_foreground",
+                    "app": "No Tracked Foreground"
+                }
+            }
+            emit_desktop_event(event, self.collector_url, self.data_directory)
+        self.untracked_start_dt = None
+        self.untracked_id = None
+        self.untracked_last_checkpoint_mono = None
 
     def _tick(self):
         now_dt = datetime.now().astimezone()
@@ -395,14 +462,42 @@ class DesktopWatcher:
         if is_ignored_app or not proc_name:
             if self.current_session:
                 self._end_current_session()
+            if not self.untracked_start_dt:
+                self.untracked_start_dt = now_dt
+                self.untracked_last_checkpoint_mono = now_mono
+                clean_ts = now_dt.isoformat().replace(":", "-").replace("+", "_")
+                self.untracked_id = f"desktop-untracked-{clean_ts}"
+            elif (now_mono - self.untracked_last_checkpoint_mono) >= 60.0:
+                dur = (now_dt - self.untracked_start_dt).total_seconds()
+                if dur >= self.min_session_duration:
+                    event = {
+                        "id": self.untracked_id,
+                        "start": self.untracked_start_dt.isoformat(),
+                        "end": now_dt.isoformat(),
+                        "duration_seconds": round(dur, 1),
+                        "source": "desktop",
+                        "context": {
+                            "status": "no_tracked_foreground",
+                            "app": "No Tracked Foreground"
+                        }
+                    }
+                    emit_desktop_event(event, self.collector_url, self.data_directory)
+                self.untracked_last_checkpoint_mono = now_mono
             return
+
+        # Tracked app active: end untracked session if running
+        if self.untracked_start_dt:
+            self._end_untracked_session(now_dt)
 
         # Desktop sessions key on app name only, not app plus title.
         context_key = app_name
 
         if not self.current_session:
             title_durations = {title: 0.0}
+            clean_ts = now_dt.isoformat().replace(":", "-").replace("+", "_")
+            clean_app = app_name.replace(" ", "_").lower()
             self.current_session = {
+                "id": f"desktop-{clean_app}-{clean_ts}",
                 "app": app_name,
                 "title": title,
                 "proc_name": proc_name,
@@ -410,13 +505,17 @@ class DesktopWatcher:
                 "key": context_key,
                 "title_durations": title_durations,
                 "last_title": title,
-                "last_title_time": now_mono
+                "last_title_time": now_mono,
+                "last_checkpoint_mono": now_mono
             }
         elif self.current_session["key"] != context_key:
             # Switched to different app
             self._end_current_session()
             title_durations = {title: 0.0}
+            clean_ts = now_dt.isoformat().replace(":", "-").replace("+", "_")
+            clean_app = app_name.replace(" ", "_").lower()
             self.current_session = {
+                "id": f"desktop-{clean_app}-{clean_ts}",
                 "app": app_name,
                 "title": title,
                 "proc_name": proc_name,
@@ -424,7 +523,8 @@ class DesktopWatcher:
                 "key": context_key,
                 "title_durations": title_durations,
                 "last_title": title,
-                "last_title_time": now_mono
+                "last_title_time": now_mono,
+                "last_checkpoint_mono": now_mono
             }
         else:
             # Same app: update title duration tracking if title changed
@@ -436,6 +536,10 @@ class DesktopWatcher:
                 self.current_session["last_title"] = title
                 self.current_session["last_title_time"] = now_mono
                 self.current_session["title"] = title
+
+            # Checkpoint session every ~60s
+            if (now_mono - self.current_session.get("last_checkpoint_mono", now_mono)) >= 60.0:
+                self._checkpoint_current_session()
 
 
 def run_standalone():

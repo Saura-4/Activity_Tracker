@@ -18,7 +18,7 @@ VS Code Extension ─────┘         (HTTP)                ├── raw
 - **Browser extensions** and the **VS Code extension** send activity events via HTTP to a local Python collector
 - The **collector** validates and appends events to daily JSONL files
 - The **report generator** reads raw data and produces agent-friendly JSON reports
-- Everything stays local. No cloud, no telemetry, no authentication
+- Everything stays local. No cloud, no telemetry. Collector endpoints support optional bearer token authentication with restricted CORS origins.
 
 ## Project Structure
 
@@ -232,14 +232,75 @@ Reports contain these sections:
 | Section | Description |
 |---------|-------------|
 | `summary` | Total active time (union), PC/browser/VS Code/mobile/desktop/manual splits, brief session stats, session count |
-| `data_quality` | Active sources present, last mobile sync timestamp, offline watcher/collector ranges, fallback ranges |
+| `daily_metrics` | Compact metrics: screen activity span, phone share, longest & top 3 focus blocks (tolerating gaps $\le 60$s), late night screen seconds (00:00–05:00), and sleep inference |
+| `labels` | Human-assigned time-range label overlay totals, planned durations, labeled vs unlabeled seconds, and coverage percentage |
+| `data_quality` | Active sources present, last mobile sync timestamp, offline watcher/collector ranges, label warnings, fallback ranges |
 | `sources` | Duration and count per source (browser, vscode, desktop, mobile, manual) |
 | `domains` | Browser domains ranked by duration with percentages |
 | `titles` | Page titles ranked by duration (top 50) |
 | `workspaces` | VS Code workspaces ranked by duration |
 | `longest_sessions` | Top 10 longest uninterrupted sessions |
-| `timeline` | All sessions in chronological order |
+| `timeline` | All sessions in chronological order, with matching label annotations |
 | `hourly_breakdown` | Activity bucketed by hour of day (union-based active seconds) |
+
+## Daily Metrics & Sleep Inference
+
+The `daily_metrics` block captures rhythm and focus without hardcoded categories:
+- **`first_activity` & `last_activity`**: Local timestamps of earliest and latest screen activity (excludes manual offline entries).
+- **`active_seconds`**: True screen union duration across PC and mobile.
+- **`phone_share`**: Ratio of mobile screen time to total screen time ($0.0$ to $1.0$).
+- **`longest_focus_block` & `top_3_focus_blocks`**: Consecutive PC time on the same application, workspace, or website domain, tolerating brief interruptions/switches up to 60 seconds.
+- **`late_night_screen_seconds`**: Total screen time between 00:00 and 05:00 local time.
+- **`sleep`**: Bedtime, wake time, duration, and phone boundaries (`last_phone_before_bed`, `first_phone_after_wake`) for the night ending on this morning. A manual "Sleep" event takes precedence; otherwise, sleep is inferred as the longest gap ($\ge 3$ hours) without screen activity spanning the night window (20:00 to 12:00) across midnight. If data is insufficient, `insufficient_data: true` is reported explicitly.
+
+## Human-Assigned Labels
+
+Labels provide intentional structure to screen time without rigid automated categorization.
+
+### Fixed Label Set
+- `build`: Deep creation, software development, writing, construction.
+- `practice`: Deliberate exercise, skill drill, coding katas.
+- `learn`: Reading technical documentation, studying papers, courses.
+- `stay-current`: Tech blogs, industry news, newsletters.
+- `career`: Portfolio, interviews, networking, resume.
+- `comms`: Email, chat, messaging, coordination.
+- `leisure`: Entertainment, casual browsing, games, social media.
+- `other`: Anything else (unknown labels fall back here).
+
+### Storage Format
+Labels are embedded inside a hidden HTML comment at the top of the daily analysis journal (`Record/analysis/YYYY/mmm/daily/DATE.md`). It remains invisible in rendered markdown:
+
+```markdown
+<!-- labels
+{
+  "energy": 4,
+  "labels": [
+    { "start": "09:00", "end": "12:15", "label": "build", "note": "Activity tracker refactoring", "planned": true },
+    { "start": "13:30", "end": "14:45", "label": "learn", "note": "Read new documentation" },
+    { "start": "15:00", "end": "16:00", "label": "comms", "note": "Team sync" },
+    { "start": "21:00", "end": "22:00", "label": "leisure", "note": "Casual videos" }
+  ]
+}
+-->
+```
+
+- **Time-range overlay**: Labels apply strictly to screen time by interval intersection. Overlapping label ranges resolve using "later entry wins".
+- **Safety**: Malformed blocks produce warnings in `data_quality.label_warnings` without failing report generation.
+- **Timeline Integration**: Timeline sessions that fall entirely within a label interval receive `"label": "<label_name>"`; partial or uncovered sessions receive `"unlabeled"`.
+
+## Dashboard & Trends (Phase E)
+
+The dashboard computes all visualizations client-side from embedded reports:
+- **Range Selector**: Day (15-minute cells), Week (last 7 days, default), Month (last 30 days), and Custom date picker (ranges $>60$ days aggregate rows by week).
+- **Layers**:
+  - **Activity**: Screen union minutes per cell (scale: 0 to 60m).
+  - **PC vs Phone**: Device distribution (sky blue for PC dominant $\ge 70\%$, purple for mobile dominant $\ge 70\%$, teal for balanced).
+  - **Label**: Cell color represents dominant label, intensity scaled by active minutes; offline manual events shown distinct from idle.
+  - **Sleep Overlay**: Subtle diagonal hatching highlighting cells overlapping bedtime/wake windows.
+- **Multi-select Label Filters**: Filter heatmap cells by one or more labels.
+- **Interactive Tooltip**: Hovering over any cell displays duration, device breakdown, top application/title, dominant label, and sleep indicators.
+- **Summary Metrics**: Average first/last activity, highest work hours (`build`+`practice`+`learn`), highest leisure hours, average sleep duration and bedtime, plus an automatic warning banner if range label coverage falls below 70%.
+- **Sleep & Baseline Panel**: Client-side SVG line chart of sleep duration and wake time, rolling 14-day median baseline, sleep regularity metric (standard deviation of bedtime in minutes), and "Today vs baseline" comparison card (with helpful fallback if $<7$ days recorded).
 
 ## Key Invariants
 

@@ -31,14 +31,19 @@ def append_event(config, event_data: Dict[str, Any]) -> bool:
     with _lock:
         evt_id = event_data["id"]
         if evt_id in _recent_ids:
-            return False # Duplicate
+            old_dur = _recent_ids[evt_id]
+            if isinstance(old_dur, (int, float)) and dur > old_dur:
+                # Checkpoint update: allow appending updated duration
+                pass
+            else:
+                return False # Duplicate or older checkpoint
             
         file_path = get_file_path(config.data_directory, start_dt)
         
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event_data) + "\n")
             
-        _recent_ids[evt_id] = True
+        _recent_ids[evt_id] = dur
         if len(_recent_ids) > 10000:
             while len(_recent_ids) > 5000:
                 _recent_ids.popitem(last=False)

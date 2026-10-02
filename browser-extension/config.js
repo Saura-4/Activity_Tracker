@@ -60,17 +60,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     statusText.textContent = 'Testing connection...';
     
     const url = urlInput.value.replace(/\/$/, '');
+    const token = authTokenInput.value.trim();
     
     try {
-      // Assuming collector has a /health or similar, if not just hit the root
-      // We will just do a fetch and see if we get a response
-      const response = await fetch(`${url}/`, { 
+      const headers = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const response = await fetch(`${url}/config`, { 
         method: 'GET',
-        mode: 'no-cors' // Use no-cors in case CORS isn't set up on root
+        headers: headers
       });
       
-      statusIndicator.className = 'status-indicator success';
-      statusText.textContent = 'Connected to Collector';
+      if (response.ok) {
+        statusIndicator.className = 'status-indicator success';
+        statusText.textContent = 'Connected and authenticated';
+      } else if (response.status === 401) {
+        statusIndicator.className = 'status-indicator error';
+        statusText.textContent = 'Authentication failed: invalid token';
+      } else {
+        statusIndicator.className = 'status-indicator error';
+        statusText.textContent = `Server responded with status ${response.status}`;
+      }
     } catch (err) {
       statusIndicator.className = 'status-indicator error';
       statusText.textContent = 'Connection failed. Is the collector running?';

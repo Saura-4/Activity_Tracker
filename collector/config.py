@@ -5,6 +5,17 @@ from pathlib import Path
 
 from typing import Dict, Any, Optional
 
+ALLOWED_LABELS = (
+    "build",
+    "practice",
+    "learn",
+    "stay-current",
+    "career",
+    "comms",
+    "leisure",
+    "other",
+)
+
 @dataclass
 class Config:
     data_directory: str = "D:\\ActivityTracker"
@@ -17,6 +28,7 @@ class Config:
     android: Dict[str, Any] = None
     auth_token: Optional[str] = None
     cors_origins: Optional[list] = None
+    allowed_labels: Optional[list] = None
 
     def __post_init__(self):
         if self.android is None:
@@ -26,10 +38,9 @@ class Config:
                 "chrome-extension://*",
                 "moz-extension://*",
                 "vscode-webview://*",
-                "http://localhost:*",
-                "http://127.0.0.1:*",
-                "null"
             ]
+        if self.allowed_labels is None:
+            self.allowed_labels = list(ALLOWED_LABELS)
 
     def __getitem__(self, item):
         return getattr(self, item)
@@ -85,6 +96,8 @@ def get_config() -> Config:
                         config.auth_token = data["auth_token"]
                     if "cors_origins" in data:
                         config.cors_origins = data["cors_origins"]
+                    if "allowed_labels" in data:
+                        config.allowed_labels = list(data["allowed_labels"])
                 break
             except Exception as e:
                 print(f"Error loading config from {p}: {e}")

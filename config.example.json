@@ -22,9 +22,16 @@
   "cors_origins": [
     "chrome-extension://*",
     "moz-extension://*",
-    "vscode-webview://*",
-    "http://localhost:*",
-    "http://127.0.0.1:*",
-    "null"
+    "vscode-webview://*"
+  ],
+  "allowed_labels": [
+    "build",
+    "practice",
+    "learn",
+    "stay-current",
+    "career",
+    "comms",
+    "leisure",
+    "other"
   ]
 }

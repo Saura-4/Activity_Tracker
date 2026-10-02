@@ -42,14 +42,15 @@ import argparse
 import json
 import sys
 import os
-from datetime import datetime, date, timedelta, timezone
+import re
+from datetime import datetime, date, time, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 from typing import List, Dict, Any, Tuple, Optional
 
 # Add parent directory to path so we can import collector modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from collector.config import get_config
+from collector.config import get_config, ALLOWED_LABELS
 
 DEFAULT_SESSION_MERGE_GAP_SECONDS = 30.0
 
@@ -89,15 +90,29 @@ def read_events(filepath: str) -> List[Dict[str, Any]]:
 
 
 def deduplicate_events(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Remove duplicate raw events by ID, preserving first occurrence."""
-    seen = set()
-    unique = []
+    """Remove duplicate raw events by ID, preserving the latest / highest-duration occurrence."""
+    by_id = {}
+    ordered_ids = []
     for event in events:
         eid = event.get("id")
-        if eid and eid not in seen:
-            seen.add(eid)
-            unique.append(event)
-    return unique
+        if not eid:
+            ordered_ids.append(event)
+            continue
+        if eid not in by_id:
+            ordered_ids.append(eid)
+            by_id[eid] = event
+        else:
+            prev = by_id[eid]
+            if float(event.get("duration_seconds", 0.0)) >= float(prev.get("duration_seconds", 0.0)):
+                by_id[eid] = event
+
+    result = []
+    for item in ordered_ids:
+        if isinstance(item, dict):
+            result.append(item)
+        else:
+            result.append(by_id[item])
+    return result
 
 
 def parse_to_utc(ts: str) -> datetime:
@@ -438,6 +453,33 @@ def subtract_intervals(
     return [r for r in result if (r[1] - r[0]).total_seconds() > 0.001]
 
 
+def find_recent_vscode_workspace(
+    s: datetime,
+    all_vscode_events: List[Dict[str, Any]],
+    max_gap_seconds: float = 1800.0,
+) -> Optional[str]:
+    """Find the most recent workspace name from VS Code events within max_gap_seconds before s."""
+    candidates = []
+    for ev in all_vscode_events:
+        ws = ev.get("context", {}).get("workspace")
+        if not ws or ws == "VS Code (no workspace)":
+            continue
+        ev_s = ev.get("_start_dt")
+        ev_e = ev.get("_end_dt")
+        if not ev_s or not ev_e:
+            continue
+        if ev_s <= s <= ev_e:
+            candidates.append((0.0, ev_e, ws))
+        elif ev_e <= s:
+            gap = (s - ev_e).total_seconds()
+            if gap <= max_gap_seconds:
+                candidates.append((gap, ev_e, ws))
+    if candidates:
+        candidates.sort(key=lambda x: (x[0], -x[1].timestamp()))
+        return candidates[0][2]
+    return None
+
+
 def carve_window_with_extension_events(
     win_start: datetime,
     win_end: datetime,
@@ -447,7 +489,7 @@ def carve_window_with_extension_events(
 ) -> List[Dict[str, Any]]:
     """Carve a desktop foreground window [win_start, win_end] with matching extension events.
     Resolves overlaps between events (e.g. multiple profiles) chronologically by giving precedence
-    to the most recently started event. Leftover time becomes unknown page / no workspace."""
+    to the most recently started event. Leftover time becomes unknown page / inherits workspace."""
     dur = (win_end - win_start).total_seconds()
     if dur <= 0.001:
         return []
@@ -471,8 +513,10 @@ def carve_window_with_extension_events(
         s_iso = s.isoformat()
         e_iso = e.isoformat()
         if fg_type == "vscode":
+            inherited_ws = find_recent_vscode_workspace(s, ext_events)
+            ws_name = inherited_ws if inherited_ws else "VS Code (no workspace)"
             return {
-                "id": f"vscode-noworkspace-{s.strftime('%H%M%S%f')}",
+                "id": f"vscode-{s.strftime('%H%M%S%f')}",
                 "source": "vscode",
                 "start": s_iso,
                 "end": e_iso,
@@ -481,7 +525,7 @@ def carve_window_with_extension_events(
                 "_end_dt": e,
                 "_duration_seconds": d,
                 "context": {
-                    "workspace": "VS Code (no workspace)"
+                    "workspace": ws_name
                 }
             }
         else:
@@ -600,19 +644,28 @@ def build_pc_timeline(
         return [], ext_events, fallback_ranges, fallback_ranges
 
     # Desktop watcher events present.
-    # 1. Separate non-foreground (idle, locked, sleep) and foreground desktop events
+    # 1. Separate non-foreground (idle, locked, sleep, no_tracked_foreground) and foreground desktop events
     non_fg_events = []
     fg_events = []
     for e in desktop_events:
         ctx = e.get("context", {})
         status = (ctx.get("status") or "").lower()
         app = (ctx.get("app") or "").lower()
-        if status in ("idle", "locked", "sleep") or app in ("idle", "locked", "sleep"):
+        if status in ("idle", "locked", "sleep", "no_tracked_foreground") or app in ("idle", "locked", "sleep", "no tracked foreground"):
             non_fg_events.append(e)
         else:
             fg_events.append(e)
 
-    non_fg_intervals = [(e["_start_dt"], e["_end_dt"]) for e in non_fg_events]
+    hard_clip_intervals = []  # locked and sleep ALWAYS clip
+    idle_intervals = []       # idle clips unless audible media exemption applies
+    for e in non_fg_events:
+        ctx = e.get("context", {})
+        st = (ctx.get("status") or "").lower()
+        ap = (ctx.get("app") or "").lower()
+        if st in ("locked", "sleep") or ap in ("locked", "sleep"):
+            hard_clip_intervals.append((e["_start_dt"], e["_end_dt"]))
+        elif st == "idle" or ap == "idle":
+            idle_intervals.append((e["_start_dt"], e["_end_dt"]))
 
     # Compute watcher online spans (union of all desktop intervals merged with gap <= 30.0s)
     all_watcher_intervals = sorted([(e["_start_dt"], e["_end_dt"]) for e in desktop_events], key=lambda x: x[0])
@@ -666,6 +719,9 @@ def build_pc_timeline(
 
     # Now carve foreground intervals
     pc_timeline_events = []
+    MEDIA_IDLE_OVERRIDE_CAP_SECONDS = 7200.0  # Cap on how long audible media can override idle
+    KNOWN_MEDIA_DOMAINS = {"youtube.com", "netflix.com", "twitch.tv", "vimeo.com", "bilibili.com", "primevideo.com", "disneyplus.com", "hulu.com", "spotify.com"}
+
     for fg_e in fg_events:
         ctx = fg_e.get("context", {})
         app = ctx.get("app", "")
@@ -673,46 +729,629 @@ def build_pc_timeline(
         title = ctx.get("title", "")
         app_type = classify_desktop_app(app, proc)
 
-        # Subtract idle, locked, sleep from this foreground interval
-        active_pieces = subtract_intervals([(fg_e["_start_dt"], fg_e["_end_dt"])], non_fg_intervals)
+        # Locked and sleep ALWAYS clip foreground intervals unconditionally
+        base_pieces = subtract_intervals([(fg_e["_start_dt"], fg_e["_end_dt"])], hard_clip_intervals)
 
-        for p_start, p_end in active_pieces:
+        for p_start, p_end in base_pieces:
             p_dur = (p_end - p_start).total_seconds()
             if p_dur <= 0.001:
                 continue
 
             if app_type == "desktop":
-                # Regular non-browser, non-VS-Code desktop app
-                evt = dict(fg_e)
-                evt["id"] = f"desktop-{app.replace(' ', '_').lower()}-{p_start.strftime('%H%M%S%f')}"
-                evt["start"] = p_start.isoformat()
-                evt["end"] = p_end.isoformat()
-                evt["duration_seconds"] = round(p_dur, 1)
-                evt["_start_dt"] = p_start
-                evt["_end_dt"] = p_end
-                evt["_duration_seconds"] = p_dur
-                evt["context"] = {"app": app, "title": title}
-                pc_timeline_events.append(evt)
+                # Regular non-browser, non-VS-Code desktop app: subtract idle intervals
+                active_pieces = subtract_intervals([(p_start, p_end)], idle_intervals)
+                for s_act, e_act in active_pieces:
+                    dur_act = (e_act - s_act).total_seconds()
+                    if dur_act <= 0.001:
+                        continue
+                    evt = dict(fg_e)
+                    evt["id"] = f"desktop-{app.replace(' ', '_').lower()}-{s_act.strftime('%H%M%S%f')}"
+                    evt["start"] = s_act.isoformat()
+                    evt["end"] = e_act.isoformat()
+                    evt["duration_seconds"] = round(dur_act, 1)
+                    evt["_start_dt"] = s_act
+                    evt["_end_dt"] = e_act
+                    evt["_duration_seconds"] = dur_act
+                    evt["context"] = {"app": app, "title": title}
+                    pc_timeline_events.append(evt)
 
             elif app_type in ("chrome", "brave", "edge"):
-                matching = []
-                for be in browser_events:
-                    b_ctx = be.get("context", {})
-                    b_name = (b_ctx.get("browser") or "").lower()
-                    if not b_name or app_type in b_name or b_name in app_type:
-                        matching.append(be)
-                    elif app_type == "chrome" and "chromium" in b_name:
-                        matching.append(be)
+                # Requirement 5: Any browser extension event fills any browser foreground window
+                matching = browser_events
 
-                carved = carve_window_with_extension_events(p_start, p_end, matching, app_type, app)
-                pc_timeline_events.extend(carved)
+                # Requirement 2: Browser media hands-off audible video overrides idle up to cap
+                is_media_window = False
+                for be in browser_events:
+                    b_s = max(p_start, be["_start_dt"])
+                    b_e = min(p_end, be["_end_dt"])
+                    if (b_e - b_s).total_seconds() > 0.001:
+                        b_ctx = be.get("context", {})
+                        if b_ctx.get("audible") is True or any(d in (b_ctx.get("domain") or "").lower() for d in KNOWN_MEDIA_DOMAINS):
+                            is_media_window = True
+                            break
+
+                if is_media_window:
+                    # Idle is overridden up to MEDIA_IDLE_OVERRIDE_CAP_SECONDS
+                    effective_idle_clips = []
+                    for id_s, id_e in idle_intervals:
+                        int_s = max(p_start, id_s)
+                        int_e = min(p_end, id_e)
+                        id_dur = (int_e - int_s).total_seconds()
+                        if id_dur > MEDIA_IDLE_OVERRIDE_CAP_SECONDS:
+                            clip_start = int_s + timedelta(seconds=MEDIA_IDLE_OVERRIDE_CAP_SECONDS)
+                            effective_idle_clips.append((clip_start, int_e))
+                    active_pieces = subtract_intervals([(p_start, p_end)], effective_idle_clips)
+                else:
+                    active_pieces = subtract_intervals([(p_start, p_end)], idle_intervals)
+
+                for s_act, e_act in active_pieces:
+                    carved = carve_window_with_extension_events(s_act, e_act, matching, app_type, app)
+                    pc_timeline_events.extend(carved)
 
             elif app_type == "vscode":
-                carved = carve_window_with_extension_events(p_start, p_end, vscode_events, "vscode", app)
-                pc_timeline_events.extend(carved)
+                active_pieces = subtract_intervals([(p_start, p_end)], idle_intervals)
+                for s_act, e_act in active_pieces:
+                    carved = carve_window_with_extension_events(s_act, e_act, vscode_events, "vscode", app)
+                    pc_timeline_events.extend(carved)
 
     pc_timeline_events.sort(key=lambda x: (x["_start_dt"], x["_end_dt"]))
     return pc_timeline_events, fallback_events, watcher_offline_ranges, fallback_ranges
+
+
+def get_pc_focus_context(event: Dict[str, Any]) -> Tuple[str, str]:
+    """Extract (type, name) focus context from a PC timeline event.
+    
+    Types: 'workspace', 'domain', 'app'.
+    """
+    source = event.get("source", "")
+    ctx = event.get("context", {})
+    if source == "vscode":
+        ws = ctx.get("workspace")
+        if ws and ws != "No Workspace":
+            return ("workspace", ws)
+        return ("app", "VS Code")
+    elif source == "browser":
+        dom = ctx.get("domain") or "browser"
+        return ("domain", dom)
+    elif source == "desktop":
+        app = ctx.get("app") or "desktop"
+        return ("app", app)
+    return ("app", ctx.get("app") or source or "desktop")
+
+
+def compute_focus_blocks(
+    pc_events: List[Dict[str, Any]],
+    report_tz: timezone,
+    gap_threshold: float = 60.0,
+) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Compute consecutive PC time on the same app, workspace or domain,
+    tolerating interruptions up to gap_threshold (default 60s).
+    
+    Returns (longest_focus_block, top_3_focus_blocks).
+    """
+    if not pc_events:
+        return None, []
+
+    sorted_evts = sorted(pc_events, key=lambda x: (x["_start_dt"], x["_end_dt"]))
+
+    by_context = defaultdict(list)
+    for evt in sorted_evts:
+        dur = float(evt.get("_duration_seconds", evt.get("duration_seconds", 0.0)))
+        if dur <= 0.001:
+            continue
+        key = get_pc_focus_context(evt)
+        by_context[key].append((evt["_start_dt"], evt["_end_dt"], dur))
+
+    all_blocks = []
+    for (ctx_type, ctx_name), intervals in by_context.items():
+        if not intervals:
+            continue
+        intervals.sort(key=lambda x: x[0])
+        curr_s, curr_e, curr_dur = intervals[0]
+        for s, e, d in intervals[1:]:
+            gap = (s - curr_e).total_seconds()
+            if gap <= gap_threshold:
+                curr_e = max(curr_e, e)
+                curr_dur += d
+            else:
+                all_blocks.append({
+                    "start": curr_s.astimezone(report_tz).isoformat(),
+                    "end": curr_e.astimezone(report_tz).isoformat(),
+                    "duration_seconds": round(curr_dur, 1),
+                    "duration": round(curr_dur, 1),
+                    "type": ctx_type,
+                    "name": ctx_name,
+                })
+                curr_s, curr_e, curr_dur = s, e, d
+        all_blocks.append({
+            "start": curr_s.astimezone(report_tz).isoformat(),
+            "end": curr_e.astimezone(report_tz).isoformat(),
+            "duration_seconds": round(curr_dur, 1),
+            "duration": round(curr_dur, 1),
+            "type": ctx_type,
+            "name": ctx_name,
+        })
+
+    if not all_blocks:
+        return None, []
+
+    all_blocks.sort(key=lambda x: x["duration_seconds"], reverse=True)
+    top_3 = all_blocks[:3]
+    longest = top_3[0] if top_3 else None
+    return longest, top_3
+
+
+def compute_late_night_seconds(
+    screen_intervals: List[Tuple[datetime, datetime]],
+    report_tz: timezone,
+    date_str: str,
+) -> float:
+    """Compute screen union seconds between 00:00 and 05:00 local time for date_str."""
+    if not screen_intervals or not date_str:
+        return 0.0
+
+    try:
+        d = date.fromisoformat(date_str)
+        w_start = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=report_tz)
+        w_end = datetime(d.year, d.month, d.day, 5, 0, 0, tzinfo=report_tz)
+    except Exception:
+        return 0.0
+
+    clipped = []
+    for s_dt, e_dt in screen_intervals:
+        s_loc = s_dt.astimezone(report_tz)
+        e_loc = e_dt.astimezone(report_tz)
+        if e_loc <= w_start or s_loc >= w_end:
+            continue
+        c_s = max(s_loc, w_start)
+        c_e = min(e_loc, w_end)
+        if c_e > c_s:
+            clipped.append((c_s, c_e))
+
+    return round(compute_union_seconds(clipped), 1)
+
+
+def compute_sleep_metrics(
+    date_str: str,
+    report_tz: timezone,
+    data_directory: Optional[str] = None,
+    events: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Compute sleep metrics for the night ending on date_str morning.
+    
+    Night window: [(D-1) 20:00, D 12:00) local time.
+    1. A manual 'Sleep' event wins.
+    2. Otherwise infer as the longest stretch with no PC and no phone activity
+       overlapping the night window (minimum 3 hours).
+    3. If data is insufficient, say so explicitly instead of guessing.
+    """
+    insufficient = {
+        "status": "insufficient_data",
+        "reason": "Insufficient activity data to determine sleep boundaries",
+        "bedtime": None,
+        "wake_time": None,
+        "duration_seconds": None,
+        "duration": None,
+        "source": None,
+        "last_phone_use_before_bedtime": None,
+        "first_phone_use_after_waking": None,
+    }
+
+    if not date_str:
+        insufficient["reason"] = "No date provided"
+        return insufficient
+
+    try:
+        d = date.fromisoformat(date_str)
+    except Exception:
+        insufficient["reason"] = f"Invalid date: {date_str}"
+        return insufficient
+
+    prev_d = d - timedelta(days=1)
+    prev_date_str = prev_d.isoformat()
+
+    w_start = datetime(prev_d.year, prev_d.month, prev_d.day, 20, 0, 0, tzinfo=report_tz)
+    w_end = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=report_tz)
+
+    all_evts = []
+    if data_directory:
+        all_evts.extend(_read_raw_files_for_date(data_directory, prev_date_str))
+        all_evts.extend(_read_raw_files_for_date(data_directory, date_str))
+    if events:
+        all_evts.extend(events)
+
+    all_evts = deduplicate_events(all_evts)
+
+    # 1. Check for manual sleep
+    manual_sleep_candidates = []
+    for e in all_evts:
+        if e.get("source") != "manual":
+            continue
+        ctx = e.get("context", {})
+        cat = (ctx.get("category") or "").lower()
+        act = (ctx.get("activity") or ctx.get("title") or "").lower()
+        if "sleep" in cat or "sleep" in act or (cat == "rest" and "sleep" in act):
+            try:
+                s_dt = parse_to_utc(e["start"]).astimezone(report_tz)
+                e_dt = parse_to_utc(e["end"]).astimezone(report_tz)
+                if e_dt > w_start and s_dt < w_end:
+                    dur = float(e.get("duration_seconds", (e_dt - s_dt).total_seconds()))
+                    manual_sleep_candidates.append((s_dt, e_dt, dur))
+            except Exception:
+                pass
+
+    mobile_events = []
+    for e in all_evts:
+        if e.get("source") == "mobile":
+            try:
+                s_dt = parse_to_utc(e["start"]).astimezone(report_tz)
+                e_dt = parse_to_utc(e["end"]).astimezone(report_tz)
+                mobile_events.append((s_dt, e_dt))
+            except Exception:
+                pass
+
+    def get_phone_boundaries(bed_dt: datetime, wake_dt: datetime) -> Tuple[Optional[str], Optional[str]]:
+        last_before = None
+        for s_m, e_m in mobile_events:
+            if e_m <= bed_dt and (bed_dt - e_m).total_seconds() <= 14400.0:
+                if last_before is None or e_m > last_before:
+                    last_before = e_m
+        first_after = None
+        for s_m, e_m in mobile_events:
+            if s_m >= wake_dt and (s_m - wake_dt).total_seconds() <= 14400.0:
+                if first_after is None or s_m < first_after:
+                    first_after = s_m
+        return (
+            last_before.isoformat() if last_before else None,
+            first_after.isoformat() if first_after else None,
+        )
+
+    if manual_sleep_candidates:
+        manual_sleep_candidates.sort(key=lambda x: x[2], reverse=True)
+        m_s, m_e, m_dur = manual_sleep_candidates[0]
+        phone_before, phone_after = get_phone_boundaries(m_s, m_e)
+        return {
+            "status": "ok",
+            "bedtime": m_s.isoformat(),
+            "wake_time": m_e.isoformat(),
+            "duration_seconds": round(m_dur, 1),
+            "duration": round(m_dur, 1),
+            "source": "manual",
+            "last_phone_use_before_bedtime": phone_before,
+            "first_phone_use_after_waking": phone_after,
+        }
+
+    # 2. Inferred sleep
+    screen_pieces = []
+    has_prev_evening_activity = False
+    has_morning_activity = False
+    midnight = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=report_tz)
+
+    for e in all_evts:
+        src = e.get("source")
+        if src not in ("browser", "vscode", "desktop", "mobile"):
+            continue
+        if src == "desktop":
+            ctx = e.get("context", {})
+            st = (ctx.get("status") or "").lower()
+            ap = (ctx.get("app") or "").lower()
+            if st in ("idle", "locked", "sleep", "no_tracked_foreground") or ap in ("idle", "locked", "sleep", "no tracked foreground"):
+                continue
+        try:
+            s_dt = parse_to_utc(e["start"]).astimezone(report_tz)
+            e_dt = parse_to_utc(e["end"]).astimezone(report_tz)
+            if e_dt <= w_start or s_dt >= w_end:
+                continue
+
+            if s_dt < midnight:
+                has_prev_evening_activity = True
+            if e_dt >= midnight:
+                has_morning_activity = True
+
+            c_s = max(s_dt, w_start)
+            c_e = min(e_dt, w_end)
+            if c_e > c_s:
+                screen_pieces.append((c_s, c_e))
+        except Exception:
+            pass
+
+    if not has_prev_evening_activity or not has_morning_activity or not screen_pieces:
+        insufficient["reason"] = "Missing evening activity before midnight or morning activity after midnight to bound sleep"
+        return insufficient
+
+    screen_pieces.sort(key=lambda x: x[0])
+    merged_screen = [screen_pieces[0]]
+    for s_int, e_int in screen_pieces[1:]:
+        if s_int <= merged_screen[-1][1]:
+            merged_screen[-1] = (merged_screen[-1][0], max(merged_screen[-1][1], e_int))
+        else:
+            merged_screen.append((s_int, e_int))
+
+    gaps = []
+    for i in range(len(merged_screen) - 1):
+        g_s = merged_screen[i][1]
+        g_e = merged_screen[i + 1][0]
+        dur = (g_e - g_s).total_seconds()
+        if dur >= 10800.0:  # Minimum 3 hours
+            gaps.append((g_s, g_e, dur))
+
+    if not gaps:
+        insufficient["reason"] = "No inactive gap >= 3 hours found across the night window"
+        return insufficient
+
+    gaps.sort(key=lambda x: x[2], reverse=True)
+    best_s, best_e, best_dur = gaps[0]
+    phone_before, phone_after = get_phone_boundaries(best_s, best_e)
+
+    return {
+        "status": "ok",
+        "bedtime": best_s.isoformat(),
+        "wake_time": best_e.isoformat(),
+        "duration_seconds": round(best_dur, 1),
+        "duration": round(best_dur, 1),
+        "source": "inferred",
+        "last_phone_use_before_bedtime": phone_before,
+        "first_phone_use_after_waking": phone_after,
+    }
+
+
+def strip_labels_block(md_text: str) -> str:
+    """Strip the hidden <!-- labels ... --> comment block from markdown before rendering."""
+    if not md_text:
+        return ""
+    return re.sub(r'<!--\s*labels\b.*?-->', '', md_text, flags=re.DOTALL | re.IGNORECASE).strip()
+
+
+def parse_labels_from_markdown(
+    md_text: Optional[str],
+    date_str: str,
+    report_tz: timezone,
+    allowed_labels: Optional[List[str]] = None,
+) -> Tuple[Optional[int], List[Dict[str, Any]], List[str]]:
+    """Parse <!-- labels ... --> JSON block from analysis markdown.
+    
+    Returns (energy, label_intervals, warnings).
+    Does NOT crash on malformed data; produces warnings instead.
+    """
+    if not md_text:
+        return None, [], []
+
+    match = re.search(r'<!--\s*labels\s*(\{.*?\})\s*-->', md_text, flags=re.DOTALL | re.IGNORECASE)
+    if not match:
+        return None, [], []
+
+    json_str = match.group(1)
+    warnings = []
+    try:
+        data = json.loads(json_str)
+    except Exception as e:
+        warnings.append(f"Malformed JSON in labels block: {e}")
+        return None, [], warnings
+
+    energy = data.get("energy")
+    if energy is not None:
+        try:
+            energy = int(energy)
+            if energy < 1 or energy > 5:
+                warnings.append(f"Energy value {energy} out of range [1, 5]")
+                energy = max(1, min(5, energy))
+        except Exception:
+            warnings.append(f"Invalid energy value: {data.get('energy')}")
+            energy = None
+
+    raw_labels = data.get("labels", [])
+    if not isinstance(raw_labels, list):
+        warnings.append("'labels' field in labels block must be a list")
+        return energy, [], warnings
+
+    try:
+        d = date.fromisoformat(date_str)
+    except Exception as e:
+        warnings.append(f"Invalid date_str for labels parsing: {date_str}")
+        return energy, [], warnings
+
+    parsed_intervals = []
+    for idx, item in enumerate(raw_labels):
+        if not isinstance(item, dict):
+            warnings.append(f"Label item #{idx} is not an object")
+            continue
+
+        lbl = str(item.get("label", "")).strip().lower()
+        if not lbl:
+            warnings.append(f"Label item #{idx} missing 'label' name")
+            continue
+
+        start_str = str(item.get("start", "")).strip()
+        end_str = str(item.get("end", "")).strip()
+        if not start_str or not end_str:
+            warnings.append(f"Label item #{idx} missing 'start' or 'end'")
+            continue
+
+        try:
+            s_parts = [int(p) for p in start_str.split(":")]
+            e_parts = [int(p) for p in end_str.split(":")]
+            s_time = time(s_parts[0], s_parts[1], s_parts[2] if len(s_parts) > 2 else 0)
+            e_time = time(e_parts[0], e_parts[1], e_parts[2] if len(e_parts) > 2 else 0)
+
+            dt_s = datetime.combine(d, s_time).replace(tzinfo=report_tz)
+            dt_e = datetime.combine(d, e_time).replace(tzinfo=report_tz)
+            if dt_e <= dt_s:
+                dt_e += timedelta(days=1)
+
+            parsed_intervals.append({
+                "label": lbl,
+                "start_dt": dt_s,
+                "end_dt": dt_e,
+                "planned": bool(item.get("planned", False)),
+                "note": str(item.get("note", "")),
+                "_order": idx,
+            })
+        except Exception as e:
+            warnings.append(f"Label item #{idx} invalid time format ({start_str} - {end_str}): {e}")
+
+    return energy, parsed_intervals, warnings
+
+
+def resolve_label_intervals(
+    label_intervals: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Resolve overlapping label ranges using 'later entry wins' rule.
+    
+    Returns a sorted list of non-overlapping time intervals.
+    """
+    if not label_intervals:
+        return []
+
+    ordered = sorted(label_intervals, key=lambda x: x.get("_order", 0))
+
+    resolved: List[Dict[str, Any]] = []
+    for item in ordered:
+        new_s = item["start_dt"]
+        new_e = item["end_dt"]
+        if new_e <= new_s:
+            continue
+
+        updated = []
+        for prev in resolved:
+            p_s = prev["start_dt"]
+            p_e = prev["end_dt"]
+
+            # No overlap
+            if p_e <= new_s or p_s >= new_e:
+                updated.append(prev)
+                continue
+
+            # Full coverage: prev completely covered by new item
+            if new_s <= p_s and new_e >= p_e:
+                continue
+
+            # Trim right
+            if p_s < new_s and p_e <= new_e:
+                trimmed = dict(prev)
+                trimmed["end_dt"] = new_s
+                updated.append(trimmed)
+            # Trim left
+            elif p_s >= new_s and p_e > new_e:
+                trimmed = dict(prev)
+                trimmed["start_dt"] = new_e
+                updated.append(trimmed)
+            # Split in two
+            elif p_s < new_s and p_e > new_e:
+                p1 = dict(prev)
+                p1["end_dt"] = new_s
+                p2 = dict(prev)
+                p2["start_dt"] = new_e
+                updated.append(p1)
+                updated.append(p2)
+
+        updated.append(item)
+        resolved = updated
+
+    resolved.sort(key=lambda x: x["start_dt"])
+    return resolved
+
+
+def overlay_labels_on_screen_time(
+    screen_intervals: List[Tuple[datetime, datetime]],
+    resolved_labels: List[Dict[str, Any]],
+    allowed_labels: Optional[List[str]] = None,
+) -> Tuple[Dict[str, Dict[str, float]], float, float, float, List[str]]:
+    """Overlay resolved label intervals on screen intervals.
+    
+    Returns:
+        (label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, warnings)
+    """
+    if allowed_labels is None:
+        allowed_labels = list(ALLOWED_LABELS)
+    allowed_set = set(allowed_labels)
+
+    label_totals = {
+        lbl: {"duration_seconds": 0.0, "planned_seconds": 0.0}
+        for lbl in allowed_labels
+    }
+    warnings = []
+
+    total_screen_seconds = compute_union_seconds(screen_intervals) if screen_intervals else 0.0
+    if not screen_intervals or not resolved_labels:
+        return label_totals, 0.0, total_screen_seconds, 0.0, warnings
+
+    labeled_intervals = []
+
+    for lbl_item in resolved_labels:
+        lbl_name = lbl_item["label"]
+        l_s = lbl_item["start_dt"]
+        l_e = lbl_item["end_dt"]
+        is_planned = lbl_item.get("planned", False)
+
+        overlapping_pieces = []
+        for s_s, s_e in screen_intervals:
+            int_s = max(s_s, l_s)
+            int_e = min(s_e, l_e)
+            if int_e > int_s:
+                overlapping_pieces.append((int_s, int_e))
+                labeled_intervals.append((int_s, int_e))
+
+        dur = compute_union_seconds(overlapping_pieces)
+        if dur > 0.001:
+            target_key = lbl_name
+            if target_key not in allowed_set:
+                target_key = "other"
+                warn_msg = f"Unknown label '{lbl_name}' treated as 'other'"
+                if warn_msg not in warnings:
+                    warnings.append(warn_msg)
+
+            label_totals[target_key]["duration_seconds"] += dur
+            if is_planned:
+                label_totals[target_key]["planned_seconds"] += dur
+
+    for lbl in label_totals:
+        label_totals[lbl]["duration_seconds"] = round(label_totals[lbl]["duration_seconds"], 1)
+        label_totals[lbl]["planned_seconds"] = round(label_totals[lbl]["planned_seconds"], 1)
+
+    labeled_seconds = round(compute_union_seconds(labeled_intervals), 1)
+    unlabeled_seconds = max(0.0, round(total_screen_seconds - labeled_seconds, 1))
+    label_coverage_pct = round(labeled_seconds / total_screen_seconds * 100, 1) if total_screen_seconds > 0 else 0.0
+
+    return label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, warnings
+
+
+def read_analysis_for_date(data_directory: Optional[str], date_str: str) -> Optional[str]:
+    """Find and read the analysis markdown file for date_str."""
+    if not date_str:
+        return None
+    try:
+        d = date.fromisoformat(date_str)
+        year = str(d.year)
+        month = d.strftime("%b").lower()
+    except Exception:
+        return None
+
+    candidate_paths = []
+    if data_directory:
+        dd = Path(data_directory)
+        candidate_paths.extend([
+            dd / "analysis" / year / month / "daily" / f"{date_str}.md",
+            dd / "analysis" / f"{date_str}.md",
+        ])
+
+    base_dirs = [
+        Path.cwd() / "Record",
+        Path(__file__).resolve().parent.parent.parent / "Record",
+    ]
+    for b in base_dirs:
+        candidate_paths.extend([
+            b / "analysis" / year / month / "daily" / f"{date_str}.md",
+            b / "analysis" / f"{date_str}.md",
+        ])
+
+    for cp in candidate_paths:
+        if cp.exists():
+            try:
+                with open(cp, "r", encoding="utf-8") as f:
+                    return f.read()
+            except Exception:
+                pass
+    return None
 
 
 def aggregate_events(
@@ -721,6 +1360,7 @@ def aggregate_events(
     min_session_duration: float = 0.0,
     data_directory: Optional[str] = None,
     date_str: Optional[str] = None,
+    analysis_text: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Aggregate raw activity events into a structured, compact report.
     
@@ -728,9 +1368,10 @@ def aggregate_events(
     and context switches) are computed from logical sessions.
     Irrelevant fields (URL, tab IDs) are omitted from the report.
     """
+    passed_data_directory = data_directory
     events = deduplicate_events(events)
     if not events:
-        return _empty_report()
+        return _empty_report(date_str=date_str)
 
     report_tz = get_report_timezone(events)
 
@@ -749,7 +1390,7 @@ def aggregate_events(
     kept_sessions = []
     if min_session_duration > 0:
         for s in logical_sessions:
-            if float(s.get("duration_seconds", 0.0)) < min_session_duration:
+            if s.get("source") != "manual" and float(s.get("duration_seconds", 0.0)) < min_session_duration:
                 brief_sessions.append(s)
             else:
                 kept_sessions.append(s)
@@ -760,7 +1401,7 @@ def aggregate_events(
     brief_session_count = len(brief_sessions)
 
     if not kept_sessions:
-        empty = _empty_report()
+        empty = _empty_report(date_str=date_str, report_tz=report_tz)
         empty["summary"]["brief_seconds"] = brief_seconds
         empty["summary"]["brief_session_count"] = brief_session_count
         return empty
@@ -877,15 +1518,7 @@ def aggregate_events(
             except Exception:
                 pass
 
-        # Timeline entry for logical session (clean, compact)
-        timeline.append({
-            "start": s["start_dt"].astimezone(report_tz).isoformat(),
-            "end": s["end_dt"].astimezone(report_tz).isoformat(),
-            "duration_seconds": round(dur, 1),
-            "source": source,
-            "context": cleaned_ctx,
-            "raw_event_count": s["raw_event_count"],
-        })
+        # (timeline constructed after label resolution)
 
     # Summary metrics
     earliest_start = min(s["start_dt"] for s in logical_sessions)
@@ -897,7 +1530,13 @@ def aggregate_events(
     screen_seconds = compute_union_seconds(screen_intervals) if screen_intervals else 0.0
     total_accounted_seconds = compute_union_seconds(all_intervals) if all_intervals else 0.0
     total_seconds = screen_seconds if screen_intervals or not all_intervals else total_accounted_seconds
-    unobserved_seconds = max(0.0, 86400.0 - total_accounted_seconds)
+    now_local = datetime.now(report_tz)
+    today_str = now_local.strftime("%Y-%m-%d")
+    day_span_seconds = 86400.0
+    if date_str and date_str == today_str:
+        day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_span_seconds = max(0.0, min(86400.0, (now_local - day_start).total_seconds()))
+    unobserved_seconds = max(0.0, day_span_seconds - total_accounted_seconds)
 
     # Per-source seconds (naive sums — they represent time on that specific device)
     browser_seconds = source_counts.get("browser", {}).get("duration", 0.0)
@@ -1114,6 +1753,101 @@ def aggregate_events(
             "duration_seconds": r["duration_seconds"],
         })
 
+    # Focus blocks (PC timeline)
+    pc_timeline_events = pc_events + fallback_events
+    longest_focus_block, top_3_focus_blocks = compute_focus_blocks(
+        pc_timeline_events, report_tz=report_tz, gap_threshold=60.0
+    )
+
+    # Screen activity boundaries (screen activity only)
+    first_screen_activity = (
+        min(s[0] for s in screen_intervals).astimezone(report_tz).isoformat()
+        if screen_intervals else None
+    )
+    last_screen_activity = (
+        max(s[1] for s in screen_intervals).astimezone(report_tz).isoformat()
+        if screen_intervals else None
+    )
+
+    calc_date_str = date_str
+    if not calc_date_str and events:
+        try:
+            calc_date_str = parse_to_utc(events[0]["start"]).astimezone(report_tz).strftime("%Y-%m-%d")
+        except Exception:
+            calc_date_str = ""
+
+    # Late night screen seconds (00:00 - 05:00 local, PC plus mobile screen union)
+    late_night_screen_seconds = compute_late_night_seconds(
+        screen_intervals, report_tz=report_tz, date_str=calc_date_str
+    )
+
+    # Sleep metrics (night ending on date_str morning)
+    sleep_metrics = compute_sleep_metrics(
+        calc_date_str, report_tz=report_tz, data_directory=passed_data_directory, events=events
+    )
+
+    mobile_screen_seconds = compute_union_seconds(mobile_intervals) if mobile_intervals else 0.0
+
+    daily_metrics = {
+        "first_activity": first_screen_activity,
+        "last_activity": last_screen_activity,
+        "active_seconds": round(screen_seconds, 1),
+        "pc_seconds": round(pc_active_seconds, 1),
+        "mobile_seconds": round(mobile_screen_seconds, 1),
+        "phone_share": round(mobile_screen_seconds / screen_seconds, 3) if screen_seconds > 0 else 0.0,
+        "longest_focus_block": longest_focus_block,
+        "top_3_focus_blocks": top_3_focus_blocks,
+        "late_night_screen_seconds": round(late_night_screen_seconds, 1),
+        "sleep": sleep_metrics,
+    }
+
+    # Labels parsing & overlay (Screen time only)
+    if analysis_text is None and calc_date_str and passed_data_directory:
+        analysis_text = read_analysis_for_date(passed_data_directory, calc_date_str)
+
+    energy, raw_label_intervals, parse_warnings = parse_labels_from_markdown(
+        analysis_text, calc_date_str, report_tz=report_tz
+    )
+    resolved_labels = resolve_label_intervals(raw_label_intervals)
+    label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, overlay_warnings = overlay_labels_on_screen_time(
+        screen_intervals, resolved_labels
+    )
+    label_warnings = parse_warnings + overlay_warnings
+
+    # Timeline entry for logical session with label
+    timeline = []
+    allowed_set = set(ALLOWED_LABELS)
+    for s in logical_sessions:
+        dur = float(s["duration_seconds"])
+        source = s["source"]
+        ctx = s.get("context", {})
+        cleaned_ctx = clean_context_for_report(source, ctx)
+
+        if source == "manual":
+            entry_label = None
+        else:
+            s_int = s["start_dt"]
+            e_int = s["end_dt"]
+            matching_labels = [
+                lbl["label"] for lbl in resolved_labels
+                if lbl["start_dt"] <= s_int and lbl["end_dt"] >= e_int
+            ]
+            if len(matching_labels) == 1:
+                matched = matching_labels[0]
+                entry_label = matched if matched in allowed_set else "other"
+            else:
+                entry_label = "unlabeled"
+
+        timeline.append({
+            "start": s["start_dt"].astimezone(report_tz).isoformat(),
+            "end": s["end_dt"].astimezone(report_tz).isoformat(),
+            "duration_seconds": round(dur, 1),
+            "source": source,
+            "context": cleaned_ctx,
+            "raw_event_count": s["raw_event_count"],
+            "label": entry_label,
+        })
+
     return {
         "summary": {
             "total_active_seconds": round(total_seconds, 1),
@@ -1133,12 +1867,25 @@ def aggregate_events(
             "last_activity": latest_end.astimezone(report_tz).isoformat(),
             "observed_span_seconds": round(observed_span_seconds, 1),
         },
+        "daily_metrics": daily_metrics,
+        "labels": {
+            "energy": energy,
+            "label_totals": label_totals,
+            "labeled_seconds": labeled_seconds,
+            "unlabeled_seconds": unlabeled_seconds,
+            "label_coverage_pct": label_coverage_pct,
+        },
+        "label_totals": label_totals,
+        "labeled_seconds": labeled_seconds,
+        "unlabeled_seconds": unlabeled_seconds,
+        "label_coverage_pct": label_coverage_pct,
         "data_quality": {
             "sources_present": sorted(list(set(e.get("source") for e in events if e.get("source")))),
             "last_mobile_sync": last_mobile_sync,
             "watcher_offline_ranges": formatted_watcher_offline,
             "collector_offline_ranges": collector_offline_ranges,
             "fallback_ranges": formatted_fallback,
+            "label_warnings": label_warnings,
         },
         "sources": sources,
         "domains": domains,
@@ -1153,8 +1900,22 @@ def aggregate_events(
     }
 
 
-def _empty_report() -> Dict[str, Any]:
+def _empty_report(date_str: Optional[str] = None, report_tz: Optional[timezone] = None) -> Dict[str, Any]:
     """Return an empty report structure."""
+    day_span_seconds = 86400.0
+    if date_str:
+        try:
+            if report_tz is None:
+                report_tz = datetime.now().astimezone().tzinfo or timezone.utc
+            now_local = datetime.now(report_tz)
+            if date_str == now_local.strftime("%Y-%m-%d"):
+                day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+                day_span_seconds = max(0.0, min(86400.0, (now_local - day_start).total_seconds()))
+        except Exception:
+            pass
+
+    empty_label_totals = {lbl: {"duration_seconds": 0.0, "planned_seconds": 0.0} for lbl in ALLOWED_LABELS}
+
     return {
         "summary": {
             "total_active_seconds": 0.0,
@@ -1168,18 +1929,52 @@ def _empty_report() -> Dict[str, Any]:
             "brief_seconds": 0.0,
             "brief_session_count": 0,
             "total_accounted_seconds": 0.0,
-            "unobserved_seconds": 86400.0,
+            "unobserved_seconds": round(day_span_seconds, 1),
             "session_count": 0,
             "first_activity": None,
             "last_activity": None,
             "observed_span_seconds": 0.0,
         },
+        "daily_metrics": {
+            "first_activity": None,
+            "last_activity": None,
+            "active_seconds": 0.0,
+            "pc_seconds": 0.0,
+            "mobile_seconds": 0.0,
+            "phone_share": 0.0,
+            "longest_focus_block": None,
+            "top_3_focus_blocks": [],
+            "late_night_screen_seconds": 0.0,
+            "sleep": {
+                "status": "insufficient_data",
+                "reason": "No events recorded",
+                "bedtime": None,
+                "wake_time": None,
+                "duration_seconds": None,
+                "duration": None,
+                "source": None,
+                "last_phone_use_before_bedtime": None,
+                "first_phone_use_after_waking": None,
+            },
+        },
+        "labels": {
+            "energy": None,
+            "label_totals": empty_label_totals,
+            "labeled_seconds": 0.0,
+            "unlabeled_seconds": 0.0,
+            "label_coverage_pct": 0.0,
+        },
+        "label_totals": empty_label_totals,
+        "labeled_seconds": 0.0,
+        "unlabeled_seconds": 0.0,
+        "label_coverage_pct": 0.0,
         "data_quality": {
             "sources_present": [],
             "last_mobile_sync": None,
             "watcher_offline_ranges": [],
             "collector_offline_ranges": [],
             "fallback_ranges": [],
+            "label_warnings": [],
         },
         "sources": {},
         "domains": [],
@@ -1194,54 +1989,112 @@ def _empty_report() -> Dict[str, Any]:
     }
 
 
-def read_day_events(data_directory: str, date_str: str) -> List[Dict[str, Any]]:
-    """Read events for a date from structured raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl
-    and raw/YYYY/mmm/daily/mobile/YYYY-MM-DD.jsonl, with backward-compatible
-    fallback to legacy raw/ locations, and merges manual offline activities."""
-    events = []
+def clip_events_to_day(
+    events: List[Dict[str, Any]],
+    date_str: str,
+    report_tz: Optional[timezone] = None
+) -> List[Dict[str, Any]]:
+    """Clip every event to [D 00:00, D+1 00:00) in local report timezone.
+    Events ending <= D 00:00 or starting >= D+1 00:00 are excluded."""
+    if not events:
+        return []
+    if report_tz is None:
+        report_tz = get_report_timezone(events)
 
-    # 1. Check structured directory: raw/YYYY/mmm/daily/YYYY-MM-DD.jsonl
-    # and mobile directory: raw/YYYY/mmm/daily/mobile/YYYY-MM-DD.jsonl
+    d = date.fromisoformat(date_str)
+    day_start = datetime(d.year, d.month, d.day, 0, 0, 0, tzinfo=report_tz)
+    day_end = day_start + timedelta(days=1)
+
+    clipped = []
+    for e in events:
+        try:
+            s_dt = parse_to_utc(e["start"]).astimezone(report_tz)
+            e_dt = parse_to_utc(e["end"]).astimezone(report_tz)
+            if e_dt <= day_start or s_dt >= day_end:
+                continue
+
+            s_clipped = max(s_dt, day_start)
+            e_clipped = min(e_dt, day_end)
+            dur = (e_clipped - s_clipped).total_seconds()
+            if dur <= 0.001:
+                continue
+
+            evt = dict(e)
+            evt["start"] = s_clipped.isoformat()
+            evt["end"] = e_clipped.isoformat()
+            evt["duration_seconds"] = round(dur, 1)
+            if "_start_dt" in evt:
+                evt["_start_dt"] = s_clipped.astimezone(timezone.utc)
+            if "_end_dt" in evt:
+                evt["_end_dt"] = e_clipped.astimezone(timezone.utc)
+            if "_duration_seconds" in evt:
+                evt["_duration_seconds"] = dur
+            clipped.append(evt)
+        except Exception:
+            continue
+
+    return clipped
+
+
+def _read_raw_files_for_date(data_directory: str, dt_str: str) -> List[Dict[str, Any]]:
+    """Read raw PC, mobile, legacy and manual activity events for a specific single date."""
+    events = []
     try:
-        d = date.fromisoformat(date_str)
+        d = date.fromisoformat(dt_str)
         year = str(d.year)
         month = d.strftime("%b").lower()
         daily_dir = Path(data_directory) / "raw" / year / month / "daily"
-        
-        structured_file = daily_dir / f"{date_str}.jsonl"
+
+        structured_file = daily_dir / f"{dt_str}.jsonl"
         if structured_file.exists():
             events.extend(read_events(str(structured_file)))
 
-        mobile_file = daily_dir / "mobile" / f"{date_str}.jsonl"
+        mobile_file = daily_dir / "mobile" / f"{dt_str}.jsonl"
         if mobile_file.exists():
             events.extend(read_events(str(mobile_file)))
     except Exception:
         pass
 
-    # 2. Check legacy paths for backward compatibility if files did not exist or legacy events remain
     raw_dir = Path(data_directory) / "raw"
-    legacy_pc_file = raw_dir / f"{date_str}.jsonl"
+    legacy_pc_file = raw_dir / f"{dt_str}.jsonl"
     if legacy_pc_file.exists():
         events.extend(read_events(str(legacy_pc_file)))
 
-    legacy_mobile_file = raw_dir / "mobile" / f"{date_str}.jsonl"
+    legacy_mobile_file = raw_dir / "mobile" / f"{dt_str}.jsonl"
     if legacy_mobile_file.exists():
         events.extend(read_events(str(legacy_mobile_file)))
 
-    legacy_desktop_file = raw_dir / "desktop" / f"{date_str}.jsonl"
+    legacy_desktop_file = raw_dir / "desktop" / f"{dt_str}.jsonl"
     if legacy_desktop_file.exists():
         events.extend(read_events(str(legacy_desktop_file)))
 
-    # 3. Read manual offline activities from Record/manual/...
     try:
         from collector.manual_storage import read_manual_events
-        manual_evts = read_manual_events(data_directory, date_str)
+        manual_evts = read_manual_events(data_directory, dt_str)
         if manual_evts:
             events.extend(manual_evts)
     except Exception:
         pass
 
-    return deduplicate_events(events)
+    return events
+
+
+def read_day_events(data_directory: str, date_str: str) -> List[Dict[str, Any]]:
+    """Read events for date D, also reading D-1's raw files (PC and mobile),
+    and clips every event to [D 00:00, D+1 00:00) local before aggregation."""
+    d = date.fromisoformat(date_str)
+    prev_d = d - timedelta(days=1)
+    prev_date_str = prev_d.isoformat()
+
+    prev_events = _read_raw_files_for_date(data_directory, prev_date_str)
+    day_events = _read_raw_files_for_date(data_directory, date_str)
+
+    all_raw = deduplicate_events(prev_events + day_events)
+    if not all_raw:
+        return []
+
+    report_tz = get_report_timezone(all_raw)
+    return clip_events_to_day(all_raw, date_str, report_tz=report_tz)
 
 
 def generate_single_day_report(
@@ -1351,9 +2204,7 @@ def generate_range_report(
 
 
 def write_report(config, report: Dict[str, Any], filename: str) -> str:
-    """Safely write JSON report to structured Record/report/YYYY/mmm/daily/ directory
-    and mirror to Record/reports/ for backward compatibility.
-    """
+    """Safely write JSON report to structured Record/report/YYYY/mmm/daily/ directory."""
     target_date_str = report.get("date")
     hierarchical_path = None
 
@@ -1371,14 +2222,15 @@ def write_report(config, report: Dict[str, Any], filename: str) -> str:
         except ValueError:
             pass
 
-    # Backward compatibility mirror
-    legacy_dir = Path(config.data_directory) / "reports"
-    legacy_dir.mkdir(parents=True, exist_ok=True)
-    legacy_path = legacy_dir / filename
-    with open(legacy_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+    if hierarchical_path:
+        return str(hierarchical_path)
 
-    return str(hierarchical_path if hierarchical_path else legacy_path)
+    fallback_dir = Path(config.data_directory) / "report"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    fallback_path = fallback_dir / filename
+    with open(fallback_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+    return str(fallback_path)
 
 
 def print_summary(report: Dict[str, Any]):

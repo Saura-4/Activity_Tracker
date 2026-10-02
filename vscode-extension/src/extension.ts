@@ -3,8 +3,10 @@ import * as crypto from 'crypto';
 import { ActivityEvent, CollectorClient } from './collector-client';
 
 interface CurrentSession {
+    id: string;
     workspace: string;
     startTime: Date;
+    lastCheckpointTime: number;
 }
 
 let currentSession: CurrentSession | null = null;
@@ -12,11 +14,7 @@ let isWindowFocused = true;
 let outputChannel: vscode.OutputChannel;
 let collectorClient: CollectorClient;
 let statusBarItem: vscode.StatusBarItem;
-
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-let lastActivityTime: Date = new Date();
-let isIdle: boolean = false;
-let idleTimer: NodeJS.Timeout | null = null;
+let checkpointTimer: NodeJS.Timeout | null = null;
 
 function getCurrentWorkspace(): string {
     const editor = vscode.window.activeTextEditor;
@@ -33,36 +31,11 @@ function getCurrentWorkspace(): string {
     return 'No Workspace';
 }
 
-function resetIdleTimer() {
-    const now = new Date();
-    if (isIdle) {
-        isIdle = false;
-        if (outputChannel) {
-            outputChannel.appendLine(`User active after idle; resuming tracking.`);
-        }
-        if (isWindowFocused) {
-            startSession(getCurrentWorkspace(), now);
-        }
-    }
-    lastActivityTime = now;
-
-    if (idleTimer) {
-        clearTimeout(idleTimer);
-    }
-    idleTimer = setTimeout(() => {
-        onIdleTimeout();
-    }, IDLE_TIMEOUT_MS);
-}
-
-function onIdleTimeout() {
-    if (isIdle) {
-        return;
-    }
-    isIdle = true;
-    if (outputChannel) {
-        outputChannel.appendLine(`No activity for 5 minutes. Ending session at last activity timestamp: ${lastActivityTime.toISOString()}`);
-    }
-    endSession(lastActivityTime);
+function getDeterministicSessionId(startTime: Date, workspace: string): string {
+    const hash = crypto.createHash('sha256')
+        .update(`vscode:${startTime.toISOString()}:${workspace}`)
+        .digest('hex');
+    return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 function getOffsetString(date: Date): string {
@@ -107,30 +80,28 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor(editor => {
-            resetIdleTimer();
             onEditorChange(editor);
         }),
         vscode.window.onDidChangeWindowState(state => onWindowFocusChange(state)),
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
-            resetIdleTimer();
             onWorkspaceChange();
-        }),
-        vscode.window.onDidChangeVisibleTextEditors(editors => onVisibleEditorsChange(editors)),
-        vscode.workspace.onDidChangeTextDocument(() => resetIdleTimer()),
-        vscode.window.onDidChangeTextEditorSelection(() => resetIdleTimer()),
-        vscode.window.onDidChangeTextEditorVisibleRanges(() => resetIdleTimer())
+        })
     );
+
+    // Periodic 60s checkpoint for crash durability
+    checkpointTimer = setInterval(() => {
+        checkpointSession();
+    }, 60000);
 
     // Initial check
     isWindowFocused = vscode.window.state.focused;
-    resetIdleTimer();
     if (isWindowFocused) {
         startSession(getCurrentWorkspace());
     }
 }
 
 function onEditorChange(editor: vscode.TextEditor | undefined) {
-    if (!isWindowFocused || isIdle) {
+    if (!isWindowFocused) {
         return;
     }
     const newWorkspace = getCurrentWorkspace();
@@ -146,22 +117,16 @@ function onEditorChange(editor: vscode.TextEditor | undefined) {
 
 function onWindowFocusChange(state: vscode.WindowState) {
     if (!state.focused) {
-        if (idleTimer) {
-            clearTimeout(idleTimer);
-            idleTimer = null;
-        }
         endSession();
         isWindowFocused = false;
     } else {
         isWindowFocused = true;
-        isIdle = false;
-        resetIdleTimer();
         startSession(getCurrentWorkspace());
     }
 }
 
 function onWorkspaceChange() {
-    if (!isWindowFocused || isIdle) {
+    if (!isWindowFocused) {
         return;
     }
     const newWorkspace = getCurrentWorkspace();
@@ -173,17 +138,45 @@ function onWorkspaceChange() {
     }
 }
 
-function onVisibleEditorsChange(editors: readonly vscode.TextEditor[]) {
-    // No-op: workspace remains tracked even if tabs close
-}
-
 function startSession(workspace: string, startTime: Date = new Date()) {
     currentSession = {
+        id: getDeterministicSessionId(startTime, workspace),
         workspace,
-        startTime: startTime
+        startTime: startTime,
+        lastCheckpointTime: Date.now()
     };
     
-    outputChannel.appendLine(`Started tracking workspace: ${workspace}`);
+    outputChannel.appendLine(`Started tracking workspace: ${workspace} (ID: ${currentSession.id})`);
+}
+
+function checkpointSession() {
+    if (!currentSession || !isWindowFocused) {
+        return;
+    }
+
+    const now = new Date();
+    const durationMs = now.getTime() - currentSession.startTime.getTime();
+    const durationSeconds = Math.max(0, Math.floor(durationMs / 1000));
+
+    const config = vscode.workspace.getConfiguration('activityTracker');
+    const minDuration = config.get<number>('minSessionDuration') ?? 2;
+
+    if (durationSeconds >= minDuration) {
+        const event: ActivityEvent = {
+            id: currentSession.id,
+            start: toIso8601WithTimezone(currentSession.startTime),
+            end: toIso8601WithTimezone(now),
+            duration_seconds: durationSeconds,
+            source: 'vscode',
+            context: {
+                workspace: currentSession.workspace
+            }
+        };
+
+        collectorClient.sendEvent(event);
+        currentSession.lastCheckpointTime = Date.now();
+        outputChannel.appendLine(`Checkpointed workspace: ${currentSession.workspace} (${durationSeconds}s)`);
+    }
 }
 
 function endSession(explicitEndTime?: Date) {
@@ -199,17 +192,8 @@ function endSession(explicitEndTime?: Date) {
     const minDuration = config.get<number>('minSessionDuration') ?? 2;
 
     if (durationSeconds >= minDuration) {
-        let uuidStr = '';
-        if (typeof crypto.randomUUID === 'function') {
-            uuidStr = crypto.randomUUID();
-        } else {
-            // fallback for older node
-            uuidStr = crypto.randomBytes(16).toString('hex');
-            uuidStr = `${uuidStr.slice(0,8)}-${uuidStr.slice(8,12)}-4${uuidStr.slice(13,16)}-a${uuidStr.slice(17,20)}-${uuidStr.slice(20)}`;
-        }
-
         const event: ActivityEvent = {
-            id: uuidStr,
+            id: currentSession.id,
             start: toIso8601WithTimezone(currentSession.startTime),
             end: toIso8601WithTimezone(endTime),
             duration_seconds: durationSeconds,
@@ -229,9 +213,9 @@ function endSession(explicitEndTime?: Date) {
 }
 
 export function deactivate() {
-    if (idleTimer) {
-        clearTimeout(idleTimer);
-        idleTimer = null;
+    if (checkpointTimer) {
+        clearInterval(checkpointTimer);
+        checkpointTimer = null;
     }
     endSession();
     if (collectorClient) {

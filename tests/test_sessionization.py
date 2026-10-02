@@ -797,7 +797,7 @@ class TestRequirement13H_ReportRegeneration:
 
         # Generate report 2
         rep2 = generate_single_day_report(cfg, date_str)
-        write_report(cfg, rep2, f"{date_str}.json")
+        saved_report_path = write_report(cfg, rep2, f"{date_str}.json")
 
         # Verify completely regenerated, not appended or duplicated
         assert rep2["summary"]["session_count"] == 2
@@ -806,7 +806,6 @@ class TestRequirement13H_ReportRegeneration:
         assert rep2["summary"]["vscode_seconds"] == 1200.0
         assert "context_switches" not in rep2["summary"]
         # Read saved report from disk to ensure clean overwrite
-        saved_report_path = tmp_data_dir / "reports" / f"{date_str}.json"
         with open(saved_report_path, "r", encoding="utf-8") as f:
             disk_report = json.load(f)
         assert disk_report["summary"]["session_count"] == 2
@@ -1182,14 +1181,15 @@ class TestManualActivityAndGapAnnotation:
         h, m, s = parse_time_str("23:25:51")
         assert (h, m, s) == (23, 25, 51)
 
+        ist = timezone(timedelta(hours=5, minutes=30))
         # Event creation
-        evt = create_manual_event("2026-10-01", "23:25:51", "23:44:23", "Walk", "fitness")
+        evt = create_manual_event("2026-10-01", "23:25:51", "23:44:23", "Walk", "fitness", tz=ist)
         assert evt["start"] == "2026-10-01T23:25:51+05:30"
         assert evt["end"] == "2026-10-01T23:44:23+05:30"
         assert evt["duration_seconds"] == 1112.0  # 18 minutes 32 seconds
 
         # Text line parsing
-        parsed = parse_text_line("23:25:51 - 23:44:23: Walk", "2026-10-01")
+        parsed = parse_text_line("23:25:51 - 23:44:23: Walk", "2026-10-01", tz=ist)
         assert parsed is not None
         assert parsed["duration_seconds"] == 1112.0
         assert parsed["context"]["activity"] == "Walk"
@@ -1198,8 +1198,9 @@ class TestManualActivityAndGapAnnotation:
         """Hours with only manual events report 0 active screen time in hourly breakdown."""
         from collector.manual_storage import create_manual_event
 
+        ist = timezone(timedelta(hours=5, minutes=30))
         events = [
-            create_manual_event("2026-10-01", "02:00:00", "10:00:00", "Sleep", "rest"),
+            create_manual_event("2026-10-01", "02:00:00", "10:00:00", "Sleep", "rest", tz=ist),
             make_vscode_event(ts(10, 15, 0), ts(10, 45, 0), "AW", "main.py", "python"),
         ]
 
@@ -1630,30 +1631,42 @@ class TestPhase5ReportCleanupAndStorage:
 # Phase 6 Tests: Shared-Secret Token Authentication & Restricted CORS
 # =============================================================================
 class TestPhase6SharedSecretAuthAndRestrictedCors:
-    def test_restricted_cors_origins(self):
-        """CORS allows known extension/webview/localhost origins and blocks unauthorized origins."""
+    def test_restricted_cors_origins(self, monkeypatch):
+        """Only allowed origins (browser extensions, VS Code webviews, localhost/null when auth_token set) receive Access-Control-Allow-Origin."""
         from collector.main import cors_headers
         from unittest.mock import Mock
+        import collector.main as main_mod
 
-        # Known browser extension origin
+        # Without auth_token: localhost origin is rejected
+        monkeypatch.setattr(main_mod.config, "auth_token", "")
+        req_local = Mock()
+        req_local.headers = {"Origin": "http://localhost:3000"}
+        h_local = cors_headers(req_local)
+        assert "Access-Control-Allow-Origin" not in h_local
+
+        # Known browser extension origin is allowed
         req_chrome = Mock()
         req_chrome.headers = {"Origin": "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn"}
         h_chrome = cors_headers(req_chrome)
         assert h_chrome.get("Access-Control-Allow-Origin") == "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn"
 
-        # Known VS Code webview origin
+        # Known VS Code webview origin is allowed
         req_vscode = Mock()
         req_vscode.headers = {"Origin": "vscode-webview://12345"}
         h_vscode = cors_headers(req_vscode)
         assert h_vscode.get("Access-Control-Allow-Origin") == "vscode-webview://12345"
 
-        # Localhost origin
-        req_local = Mock()
-        req_local.headers = {"Origin": "http://localhost:3000"}
-        h_local = cors_headers(req_local)
-        assert h_local.get("Access-Control-Allow-Origin") == "http://localhost:3000"
+        # With auth_token set: localhost and null origins are allowed
+        monkeypatch.setattr(main_mod.config, "auth_token", "super-secret-token")
+        h_local_auth = cors_headers(req_local)
+        assert h_local_auth.get("Access-Control-Allow-Origin") == "http://localhost:3000"
 
-        # Malicious / unauthorized external origin
+        req_null = Mock()
+        req_null.headers = {"Origin": "null"}
+        h_null = cors_headers(req_null)
+        assert h_null.get("Access-Control-Allow-Origin") == "null"
+
+        # Malicious / unauthorized external origin is always rejected
         req_evil = Mock()
         req_evil.headers = {"Origin": "https://malicious-site.example.com"}
         h_evil = cors_headers(req_evil)
@@ -1733,4 +1746,670 @@ class TestPhase6SharedSecretAuthAndRestrictedCors:
             assert handler_called
 
         asyncio.run(_test())
+
+
+# =============================================================================
+# Phase A Tests: Review Findings & Robustness
+# =============================================================================
+class TestPhaseADayBoundariesAndMidnightSpanning:
+    def test_session_spanning_midnight_reads_d_minus_one_and_clips(self, tmp_path):
+        """read_day_events for date D reads D-1 raw files and clips events to [D 00:00, D+1 00:00).
+        Watcher event is in D-1 (23:50 to 00:30) and extension event is in D (00:05 to 00:25).
+        """
+        from reporting.generate_report import read_day_events, aggregate_events
+        import json
+
+        data_dir = tmp_path
+        d_minus_1 = "2026-09-29"
+        d = "2026-09-30"
+
+        # Raw files structure
+        p_raw_prev = data_dir / "raw" / "2026" / "sep" / "daily"
+        p_raw_prev.mkdir(parents=True, exist_ok=True)
+
+        # Watcher event spanning midnight: 23:50:00 on 2026-09-29 to 00:30:00 on 2026-09-30 (40 mins = 2400s)
+        # Saved in D-1 raw file
+        watcher_evt = {
+            "id": "watcher-midnight-1",
+            "start": "2026-09-29T23:50:00+05:30",
+            "end": "2026-09-30T00:30:00+05:30",
+            "duration_seconds": 2400.0,
+            "source": "desktop",
+            "context": {"app": "chrome", "process_name": "chrome.exe", "window_title": "YouTube"}
+        }
+        with open(p_raw_prev / f"{d_minus_1}.jsonl", "w", encoding="utf-8") as f:
+            f.write(json.dumps(watcher_evt) + "\n")
+
+        # Extension event on day D: 00:05:00 to 00:25:00 on 2026-09-30 (20 mins = 1200s)
+        # Saved in D raw file
+        ext_evt = {
+            "id": "browser-midnight-1",
+            "start": "2026-09-30T00:05:00+05:30",
+            "end": "2026-09-30T00:25:00+05:30",
+            "duration_seconds": 1200.0,
+            "source": "browser",
+            "context": {"browser": "chrome", "domain": "youtube.com", "title": "Lecture Video"}
+        }
+        with open(p_raw_prev / f"{d}.jsonl", "w", encoding="utf-8") as f:
+            f.write(json.dumps(ext_evt) + "\n")
+
+        # Read day D events
+        events = read_day_events(str(data_dir), d)
+        assert len(events) >= 2
+
+        # The watcher event from D-1 must be clipped to start at 00:00:00 on D
+        w_events = [e for e in events if e["source"] == "desktop"]
+        assert len(w_events) == 1
+        assert w_events[0]["start"] == "2026-09-30T00:00:00+05:30"
+        assert w_events[0]["end"] == "2026-09-30T00:30:00+05:30"
+        assert w_events[0]["duration_seconds"] == 1800.0  # 30 mins left on day D
+
+        # Aggregate events for day D
+        report = aggregate_events(events)
+        assert report["summary"]["total_active_seconds"] == 1800.0  # 30 mins active on day D
+        assert "domains" in report
+        yt = next(dom for dom in report["domains"] if dom["domain"] == "youtube.com")
+        assert yt["duration_seconds"] == 1200.0
+
+
+class TestPhaseABrowserMediaAndAudibleOverride:
+    def test_audible_media_overrides_idle_with_cap_and_locked_clips(self):
+        """Audible browser video overrides idle intervals up to cap (7200s), but locked state always clips."""
+        from reporting.generate_report import aggregate_events
+
+        events = [
+            # Foreground Chrome 10:00:00 to 11:30:00 (90 mins)
+            {
+                "id": "d-chrome",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T11:30:00+05:30",
+                "duration_seconds": 5400.0,
+                "source": "desktop",
+                "context": {"app": "chrome", "process_name": "chrome.exe", "window_title": "Documentary"}
+            },
+            # Audible browser tab 10:00:00 to 11:30:00
+            {
+                "id": "b-yt",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T11:30:00+05:30",
+                "duration_seconds": 5400.0,
+                "source": "browser",
+                "context": {"browser": "chrome", "domain": "youtube.com", "title": "Documentary", "audible": True}
+            },
+            # Idle from 10:10:00 to 11:00:00 (50 mins) - hands off keyboard/mouse
+            {
+                "id": "w-idle",
+                "start": "2026-09-29T10:10:00+05:30",
+                "end": "2026-09-29T11:00:00+05:30",
+                "duration_seconds": 3000.0,
+                "source": "desktop",
+                "context": {"status": "idle", "app": "idle"}
+            },
+            # User locked screen from 11:15:00 to 11:25:00 (10 mins) - lock MUST clip
+            {
+                "id": "w-lock",
+                "start": "2026-09-29T11:15:00+05:30",
+                "end": "2026-09-29T11:25:00+05:30",
+                "duration_seconds": 600.0,
+                "source": "desktop",
+                "context": {"status": "locked", "app": "locked"}
+            }
+        ]
+
+        report = aggregate_events(events)
+        # Total active time: 90 mins (5400s) minus 10 mins locked (600s) = 80 mins (4800s).
+        # Idle was NOT deducted because video was audible!
+        assert report["summary"]["total_active_seconds"] == 4800.0
+
+
+class TestPhaseAVSCodeWorkspaceInheritance:
+    def test_leftover_vscode_time_inherits_recent_workspace(self):
+        """Leftover VS Code foreground time inherits most recent workspace within 30 min instead of becoming 'no workspace'."""
+        from reporting.generate_report import aggregate_events
+
+        events = [
+            # Extension reported workspace 'ProjectX' from 10:00:00 to 10:15:00
+            {
+                "id": "v-1",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T10:15:00+05:30",
+                "duration_seconds": 900.0,
+                "source": "vscode",
+                "context": {"workspace": "ProjectX"}
+            },
+            # Desktop watcher reports Code foreground from 10:00:00 to 10:35:00 (35 min)
+            # Extension stopped sending events at 10:15:00 (e.g. reading docs or paused typing)
+            # Leftover window 10:15:00 - 10:35:00 is 20 min (<= 30 min threshold)
+            {
+                "id": "d-code",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T10:35:00+05:30",
+                "duration_seconds": 2100.0,
+                "source": "desktop",
+                "context": {"app": "code", "process_name": "code.exe", "window_title": "ProjectX - Visual Studio Code"}
+            }
+        ]
+
+        report = aggregate_events(events)
+        # Workspace should be ProjectX for the full 2100s, not 'no workspace'
+        assert "workspaces" in report
+        ws = report["workspaces"]
+        assert len(ws) == 1
+        assert ws[0]["workspace"] == "ProjectX"
+        assert ws[0]["duration_seconds"] == 2100.0
+
+
+class TestPhaseABrowserMatchingAnyBrowser:
+    def test_any_browser_extension_fills_browser_foreground(self):
+        """Browser extension events match any browser foreground window (e.g. Chrome extension event filling Brave window)."""
+        from reporting.generate_report import aggregate_events
+
+        events = [
+            # Extension event says browser="chrome"
+            {
+                "id": "b-event",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T10:20:00+05:30",
+                "duration_seconds": 1200.0,
+                "source": "browser",
+                "context": {"browser": "chrome", "domain": "github.com", "title": "GitHub Repo"}
+            },
+            # Watcher event says app="brave"
+            {
+                "id": "d-brave",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T10:20:00+05:30",
+                "duration_seconds": 1200.0,
+                "source": "desktop",
+                "context": {"app": "brave", "process_name": "brave.exe", "window_title": "GitHub"}
+            }
+        ]
+
+        report = aggregate_events(events)
+        assert report["summary"]["total_active_seconds"] == 1200.0
+        assert len(report["domains"]) == 1
+        assert report["domains"][0]["domain"] == "github.com"
+        assert report["domains"][0]["duration_seconds"] == 1200.0
+
+
+class TestPhaseAAndroidMultiActivity:
+    def test_android_multi_activity_transition_preserves_session(self):
+        """Switching activities within same package (MainActivity -> TweetDetailActivity) does not cut session."""
+        from collector.android_collector import parse_usagestats_events
+
+        dev_tz = timezone(timedelta(hours=5, minutes=30))
+        sample_dumpsys = """
+time="2026-09-30 10:00:00" type=SCREEN_INTERACTIVE package=android
+time="2026-09-30 10:00:05" type=KEYGUARD_HIDDEN package=android
+time="2026-09-30 10:00:10" type=ACTIVITY_RESUMED package=com.twitter.android class=com.twitter.app.main.MainActivity
+time="2026-09-30 10:02:00" type=ACTIVITY_PAUSED package=com.twitter.android class=com.twitter.app.main.MainActivity
+time="2026-09-30 10:02:00" type=ACTIVITY_RESUMED package=com.twitter.android class=com.twitter.tweetdetail.TweetDetailActivity
+time="2026-09-30 10:02:01" type=ACTIVITY_STOPPED package=com.twitter.android class=com.twitter.app.main.MainActivity
+time="2026-09-30 10:05:00" type=ACTIVITY_PAUSED package=com.twitter.android class=com.twitter.tweetdetail.TweetDetailActivity
+time="2026-09-30 10:05:01" type=ACTIVITY_STOPPED package=com.twitter.android class=com.twitter.tweetdetail.TweetDetailActivity
+"""
+        sessions = parse_usagestats_events(sample_dumpsys, dev_tz, min_duration_seconds=2.0)
+        assert len(sessions) == 1
+        s = sessions[0]
+        assert s["context"]["app"] == "Twitter / X"
+        assert s["start"] == "2026-09-30T10:00:10+05:30"
+        assert s["end"] == "2026-09-30T10:05:01+05:30"
+        assert s["duration_seconds"] == 291.0
+
+
+class TestPhaseASecurityAndRedaction:
+    def test_config_endpoint_redacts_auth_token(self):
+        """The /config endpoint must redact the auth_token."""
+        import asyncio
+        from aiohttp import web
+        from unittest.mock import Mock
+        import collector.main as main_mod
+
+        async def _test():
+            orig_token = getattr(main_mod.config, "auth_token", None)
+            try:
+                main_mod.config.auth_token = "my-secret-token"
+                req = Mock(spec=web.Request)
+                req.headers = {}
+                resp = await main_mod.handle_config(req)
+                import json
+                body = json.loads(resp.text)
+                assert body["auth_token"] == "***REDACTED***"
+            finally:
+                main_mod.config.auth_token = orig_token
+
+        asyncio.run(_test())
+
+
+class TestPhaseAMinorRequirements:
+    def test_manual_events_exempt_from_40s_filter(self):
+        """Manual events with duration < 40s (e.g. 25s) are exempt from 40s min_duration filter."""
+        from reporting.generate_report import aggregate_events
+
+        events = [
+            {
+                "id": "manual-short-1",
+                "start": "2026-09-29T10:00:00+05:30",
+                "end": "2026-09-29T10:00:25+05:30",
+                "duration_seconds": 25.0,
+                "source": "manual",
+                "context": {"activity": "Quick water break", "category": "personal"}
+            }
+        ]
+        report = aggregate_events(events, min_session_duration=40.0)
+        assert len(report["timeline"]) == 1
+        assert report["timeline"][0]["context"]["activity"] == "Quick water break"
+        assert report["summary"]["manual_seconds"] == 25.0
+
+    def test_unobserved_seconds_capped_at_now_for_today(self):
+        """For today, unobserved_seconds must be capped at elapsed seconds from midnight to now, not whole 86400s."""
+        from reporting.generate_report import aggregate_events
+        from datetime import datetime, timezone, timedelta
+
+        ist = timezone(timedelta(hours=5, minutes=30))
+        today_str = datetime.now(ist).strftime("%Y-%m-%d")
+
+        # Empty event list for today
+        report = aggregate_events([], date_str=today_str)
+        # Unobserved seconds should not be 86400 unless it's exactly 23:59:59
+        now_local = datetime.now().astimezone()
+        day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        elapsed = (now_local - day_start).total_seconds()
+        assert report["summary"]["unobserved_seconds"] <= elapsed + 5.0
+        assert report["summary"]["unobserved_seconds"] < 86400.0 or elapsed >= 86395.0
+
+
+# =============================================================================
+# Phase B Tests: Dashboard Template Refactor
+# =============================================================================
+class TestPhaseBDashboardTemplate:
+    def test_dashboard_template_substitutes_cleanly_without_doubled_braces(self, tmp_path):
+        """dashboard_template.html substitutes placeholders and contains no doubled braces."""
+        from reporting.generate_dashboard import build_dashboard_html
+        from pathlib import Path
+
+        reports_data = {
+            "2026-10-01": {
+                "date": "2026-10-01",
+                "summary": {"total_active_seconds": 3600.0, "session_count": 5},
+                "timeline": [],
+                "sources": {}
+            }
+        }
+        analyses_data = {"2026-10-01": "# Test Note\nGood day."}
+
+        html = build_dashboard_html(reports_data, analyses_data, "2026-10-01")
+        assert "<!DOCTYPE html>" in html
+        assert "const REPORTS_DATABASE = " in html
+        assert "2026-10-01" in html
+        assert "{{REPORTS_JSON}}" not in html
+        assert "{{INITIAL_DATE}}" not in html
+
+        # Check template file itself
+        template_path = Path("reporting/dashboard_template.html")
+        assert template_path.exists()
+        with open(template_path, "r", encoding="utf-8") as f:
+            template_text = f.read()
+
+        # Placeholders exist in template
+        assert "{{REPORTS_JSON}}" in template_text
+        assert "{{INITIAL_DATE}}" in template_text
+
+        # Verify no doubled braces {{ or }} in CSS/JS outside placeholders
+        cleaned = template_text
+        for p in ["{{REPORTS_JSON}}", "{{ANALYSES_JSON}}", "{{ANALYSES_HTML_JSON}}", "{{AUTH_TOKEN_JSON}}", "{{INITIAL_DATE}}"]:
+            cleaned = cleaned.replace(p, "")
+        assert "{{" not in cleaned
+        assert "}}" not in cleaned
+
+
+# =============================================================================
+# Phase C Tests: daily_metrics in each day's report
+# =============================================================================
+class TestPhaseCDailyMetrics:
+    def test_daily_metrics_structure_and_screen_activity(self):
+        """daily_metrics contains first/last activity (screen only), active_seconds, pc_seconds, mobile_seconds, phone_share."""
+        events = [
+            # Manual event early morning (should NOT be first_activity)
+            {
+                "id": "man-1",
+                "start": "2026-10-01T06:00:00+05:30",
+                "end": "2026-10-01T06:30:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Meditation", "category": "health"},
+            },
+            # PC screen event
+            make_browser_event("2026-10-01T08:00:00+05:30", "2026-10-01T09:00:00+05:30", "github.com", "GitHub"),
+            # Mobile screen event
+            {
+                "id": "mob-1",
+                "start": "2026-10-01T09:30:00+05:30",
+                "end": "2026-10-01T10:00:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "mobile",
+                "context": {"app": "Twitter", "package": "com.twitter.android"},
+            },
+            # Manual event late evening (should NOT be last_activity)
+            {
+                "id": "man-2",
+                "start": "2026-10-01T22:00:00+05:30",
+                "end": "2026-10-01T22:30:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Journaling", "category": "reflection"},
+            },
+        ]
+
+        report = aggregate_events(events, date_str="2026-10-01")
+        assert "daily_metrics" in report
+        dm = report["daily_metrics"]
+
+        # first_activity and last_activity are SCREEN activity only
+        assert dm["first_activity"] == "2026-10-01T08:00:00+05:30"
+        assert dm["last_activity"] == "2026-10-01T10:00:00+05:30"
+
+        # Durations
+        assert dm["pc_seconds"] == 3600.0
+        assert dm["mobile_seconds"] == 1800.0
+        assert dm["active_seconds"] == 5400.0
+        assert dm["phone_share"] == round(1800.0 / 5400.0, 3)
+
+    def test_focus_blocks_consecutive_pc_with_interruption_tolerance(self):
+        """Focus block tolerates gaps/interruptions <= 60s, breaks on > 60s."""
+        events = [
+            # Block 1: VS Code 10:00 - 10:20 (1200s)
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T10:20:00+05:30", "my-project", "src/a.py", "python"),
+            # Interruption: 30s gap (<= 60s)
+            # Continuation of Block 1: VS Code 10:20:30 - 10:40:00 (1170s)
+            make_vscode_event("2026-10-01T10:20:30+05:30", "2026-10-01T10:40:00+05:30", "my-project", "src/b.py", "python"),
+            # Interruption: 5 minutes (> 60s)
+            # Block 2: VS Code 10:45:00 - 11:00:00 (900s)
+            make_vscode_event("2026-10-01T10:45:00+05:30", "2026-10-01T11:00:00+05:30", "my-project", "src/c.py", "python"),
+        ]
+
+        report = aggregate_events(events, date_str="2026-10-01")
+        dm = report["daily_metrics"]
+        assert dm["longest_focus_block"] is not None
+        longest = dm["longest_focus_block"]
+        assert longest["type"] == "workspace"
+        assert longest["name"] == "my-project"
+        assert longest["start"] == "2026-10-01T10:00:00+05:30"
+        assert longest["end"] == "2026-10-01T10:40:00+05:30"
+        assert longest["duration_seconds"] == 2370.0  # 1200 + 1170
+
+        assert len(dm["top_3_focus_blocks"]) == 2
+        assert dm["top_3_focus_blocks"][0]["duration_seconds"] == 2370.0
+        assert dm["top_3_focus_blocks"][1]["duration_seconds"] == 900.0
+
+    def test_late_night_screen_seconds(self):
+        """late_night_screen_seconds measures screen union between 00:00 and 05:00 local."""
+        events = [
+            # PC screen 01:00 - 02:00 (3600s)
+            make_browser_event("2026-10-01T01:00:00+05:30", "2026-10-01T02:00:00+05:30", "github.com", "GitHub"),
+            # Mobile screen 01:30 - 02:30 (overlaps PC from 01:30 to 02:00)
+            {
+                "id": "mob-late",
+                "start": "2026-10-01T01:30:00+05:30",
+                "end": "2026-10-01T02:30:00+05:30",
+                "duration_seconds": 3600.0,
+                "source": "mobile",
+                "context": {"app": "Reddit", "package": "com.reddit.frontpage"},
+            },
+            # Daytime screen 10:00 - 11:00 (outside 00:00-05:00)
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "docs.python.org", "Python Docs"),
+        ]
+
+        report = aggregate_events(events, date_str="2026-10-01")
+        dm = report["daily_metrics"]
+        # Union of 01:00-02:00 and 01:30-02:30 is 01:00-02:30 = 1.5 hours = 5400s
+        assert dm["late_night_screen_seconds"] == 5400.0
+
+    def test_sleep_inference_midnight_crossing(self):
+        """Sleep inference across midnight: previous evening last activity to next morning first activity."""
+        events = [
+            # D-1 evening activity: ends at 23:30 (bedtime)
+            make_browser_event("2026-09-30T22:30:00+05:30", "2026-09-30T23:30:00+05:30", "youtube.com", "YouTube"),
+            # D-1 late phone use: ends at 23:25
+            {
+                "id": "mob-bed",
+                "start": "2026-09-30T23:20:00+05:30",
+                "end": "2026-09-30T23:25:00+05:30",
+                "duration_seconds": 300.0,
+                "source": "mobile",
+                "context": {"app": "WhatsApp", "package": "com.whatsapp"},
+            },
+            # D morning phone use: starts at 07:35
+            {
+                "id": "mob-wake",
+                "start": "2026-10-01T07:35:00+05:30",
+                "end": "2026-10-01T07:45:00+05:30",
+                "duration_seconds": 600.0,
+                "source": "mobile",
+                "context": {"app": "WhatsApp", "package": "com.whatsapp"},
+            },
+            # D morning PC activity: starts at 07:30 (wake time)
+            make_vscode_event("2026-10-01T07:30:00+05:30", "2026-10-01T09:00:00+05:30", "my-project", "main.py", "python"),
+        ]
+
+        report = aggregate_events(events, date_str="2026-10-01")
+        sleep = report["daily_metrics"]["sleep"]
+        assert sleep["status"] == "ok"
+        assert sleep["source"] == "inferred"
+        assert sleep["bedtime"] == "2026-09-30T23:30:00+05:30"
+        assert sleep["wake_time"] == "2026-10-01T07:30:00+05:30"
+        assert sleep["duration_seconds"] == 8.0 * 3600  # 8 hours = 28800s
+        assert sleep["last_phone_use_before_bedtime"] == "2026-09-30T23:25:00+05:30"
+        assert sleep["first_phone_use_after_waking"] == "2026-10-01T07:35:00+05:30"
+
+    def test_sleep_manual_override(self):
+        """Manual 'Sleep' event wins over inferred inactive gaps."""
+        events = [
+            # Inferred gap would be 23:00 to 07:00
+            make_browser_event("2026-09-30T22:00:00+05:30", "2026-09-30T23:00:00+05:30", "github.com", "GitHub"),
+            make_browser_event("2026-10-01T07:00:00+05:30", "2026-10-01T08:00:00+05:30", "github.com", "GitHub"),
+            # Explicit manual sleep event: 23:45 to 06:45
+            {
+                "id": "man-sleep",
+                "start": "2026-09-30T23:45:00+05:30",
+                "end": "2026-10-01T06:45:00+05:30",
+                "duration_seconds": 7.0 * 3600,
+                "source": "manual",
+                "context": {"activity": "Sleep", "category": "rest"},
+            }
+        ]
+
+        report = aggregate_events(events, date_str="2026-10-01")
+        sleep = report["daily_metrics"]["sleep"]
+        assert sleep["status"] == "ok"
+        assert sleep["source"] == "manual"
+        assert sleep["bedtime"] == "2026-09-30T23:45:00+05:30"
+        assert sleep["wake_time"] == "2026-10-01T06:45:00+05:30"
+        assert sleep["duration_seconds"] == 7.0 * 3600
+
+    def test_sleep_insufficient_data(self):
+        """Insufficient data flagged explicitly when previous evening is missing or gap < 3 hours."""
+        # Only morning activity, no previous evening activity
+        events = [
+            make_browser_event("2026-10-01T08:00:00+05:30", "2026-10-01T10:00:00+05:30", "github.com", "GitHub"),
+        ]
+        report = aggregate_events(events, date_str="2026-10-01")
+        sleep = report["daily_metrics"]["sleep"]
+        assert sleep["status"] == "insufficient_data"
+        assert "Missing" in sleep["reason"] or "Insufficient" in sleep["reason"]
+        assert sleep["bedtime"] is None
+
+
+# =============================================================================
+# Phase D Tests: Labels (human-assigned, time-range based)
+# =============================================================================
+class TestPhaseDLabels:
+    def test_labels_overlay_split_across_two_labels(self):
+        """A single continuous session spanning two label ranges is split by time for accounting."""
+        events = [
+            # 2-hour continuous VS Code session: 09:00 to 11:00 (7200s)
+            make_vscode_event("2026-10-01T09:00:00+05:30", "2026-10-01T11:00:00+05:30", "my-project", "main.py", "python"),
+        ]
+        analysis_md = """# Analysis
+<!-- labels
+{
+  "energy": 4,
+  "labels": [
+    {"start": "09:00", "end": "10:00", "label": "build", "note": "Core logic", "planned": true},
+    {"start": "10:00", "end": "11:00", "label": "practice", "note": "Testing", "planned": false}
+  ]
+}
+-->
+Today was productive.
+"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        assert "label_totals" in report
+        lt = report["label_totals"]
+        assert lt["build"]["duration_seconds"] == 3600.0
+        assert lt["build"]["planned_seconds"] == 3600.0
+        assert lt["practice"]["duration_seconds"] == 3600.0
+        assert lt["practice"]["planned_seconds"] == 0.0
+
+        assert report["labeled_seconds"] == 7200.0
+        assert report["unlabeled_seconds"] == 0.0
+        assert report["label_coverage_pct"] == 100.0
+        assert report["labels"]["energy"] == 4
+
+    def test_labels_partial_coverage_and_coverage_math(self):
+        """Partial label coverage correctly computes labeled_seconds, unlabeled_seconds, and label_coverage_pct."""
+        events = [
+            # 4-hour active screen time: 10:00 to 14:00 (14400s)
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T14:00:00+05:30", "github.com", "GitHub"),
+        ]
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "10:00", "end": "11:00", "label": "learn", "planned": true}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        assert report["label_totals"]["learn"]["duration_seconds"] == 3600.0
+        assert report["labeled_seconds"] == 3600.0
+        assert report["unlabeled_seconds"] == 10800.0
+        assert report["label_coverage_pct"] == 25.0
+
+    def test_overlapping_label_ranges_later_entry_wins(self):
+        """Later entry wins rule for overlapping label ranges."""
+        events = [
+            make_vscode_event("2026-10-01T09:00:00+05:30", "2026-10-01T11:00:00+05:30", "my-project", "main.py", "python"),
+        ]
+        # Range 1: 09:00 - 11:00 (build)
+        # Range 2: 10:00 - 10:30 (practice) - defined later, so it overwrites 10:00-10:30
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "09:00", "end": "11:00", "label": "build", "planned": true},
+    {"start": "10:00", "end": "10:30", "label": "practice", "planned": true}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        lt = report["label_totals"]
+        # Practice gets 10:00 - 10:30 (30 min = 1800s)
+        assert lt["practice"]["duration_seconds"] == 1800.0
+        # Build gets 09:00 - 10:00 (3600s) + 10:30 - 11:00 (1800s) = 5400s
+        assert lt["build"]["duration_seconds"] == 5400.0
+        assert report["labeled_seconds"] == 7200.0
+
+    def test_unknown_label_treated_as_other_and_warned(self):
+        """Unknown label treated as 'other' and flagged in data_quality.label_warnings."""
+        events = [
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "github.com", "GitHub"),
+        ]
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "10:00", "end": "11:00", "label": "quantum-research", "planned": false}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        assert report["label_totals"]["other"]["duration_seconds"] == 3600.0
+        warnings = report["data_quality"]["label_warnings"]
+        assert any("quantum-research" in w and "other" in w for w in warnings)
+
+    def test_malformed_label_block_does_not_crash(self):
+        """Malformed block produces a warning in data_quality, never a crash."""
+        events = [
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "github.com", "GitHub"),
+        ]
+        analysis_md = """<!-- labels
+{ this is clearly not valid json }
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        assert report["summary"]["total_active_seconds"] == 3600.0
+        assert report["label_coverage_pct"] == 0.0
+        warnings = report["data_quality"]["label_warnings"]
+        assert len(warnings) > 0
+        assert any("Malformed JSON" in w for w in warnings)
+
+    def test_no_label_block_tolerant(self):
+        """Tolerant of missing labels block without warnings or crash."""
+        events = [
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "github.com", "GitHub"),
+        ]
+        analysis_md = "# Standard journal\nJust plain notes without labels."
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        assert report["label_coverage_pct"] == 0.0
+        assert report["unlabeled_seconds"] == 3600.0
+        assert len(report["data_quality"]["label_warnings"]) == 0
+
+    def test_timeline_entry_label_attribution(self):
+        """Timeline entries get label if single label covers whole entry, else 'unlabeled', manual -> None."""
+        events = [
+            # Entry 1: 09:00 - 10:00 wholly covered by "build"
+            make_vscode_event("2026-10-01T09:00:00+05:30", "2026-10-01T10:00:00+05:30", "p1", "a.py", "python"),
+            # Entry 2: 10:00 - 11:00 partially covered by "practice" (10:00-10:30 only)
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "github.com", "GitHub"),
+            # Entry 3: Manual event (keeps own category, label is None)
+            {
+                "id": "man-1",
+                "start": "2026-10-01T11:30:00+05:30",
+                "end": "2026-10-01T12:00:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Gym", "category": "health"},
+            }
+        ]
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "09:00", "end": "10:00", "label": "build"},
+    {"start": "10:00", "end": "10:30", "label": "practice"}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        tl = report["timeline"]
+        assert len(tl) == 3
+        # Entry 1: wholly covered by "build"
+        assert tl[0]["label"] == "build"
+        # Entry 2: only half covered -> "unlabeled"
+        assert tl[1]["label"] == "unlabeled"
+        # Entry 3: manual event -> None
+        assert tl[2]["label"] is None
+
+    def test_strip_labels_block(self):
+        """strip_labels_block removes hidden block before rendering markdown."""
+        from reporting.generate_report import strip_labels_block
+
+        text = """# Header
+<!-- labels
+{
+  "energy": 3,
+  "labels": []
+}
+-->
+Paragraph content."""
+        stripped = strip_labels_block(text)
+        assert "<!-- labels" not in stripped
+        assert "# Header" in stripped
+        assert "Paragraph content." in stripped
+
 

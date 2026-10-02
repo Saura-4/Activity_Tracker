@@ -16,8 +16,8 @@ def tmp_data_dir(tmp_path):
     """Create a temporary data directory mimicking D:\\ActivityTracker."""
     raw_dir = tmp_path / "raw"
     raw_dir.mkdir()
-    reports_dir = tmp_path / "reports"
-    reports_dir.mkdir()
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
     return tmp_path
 
 

@@ -18,14 +18,29 @@ config = get_config()
 import fnmatch
 
 def cors_headers(request=None):
-    allowed_patterns = getattr(config, "cors_origins", None) or [
-        "chrome-extension://*",
-        "moz-extension://*",
-        "vscode-webview://*",
-        "http://localhost:*",
-        "http://127.0.0.1:*",
-        "null"
-    ]
+    if getattr(config, "cors_origins", None):
+        allowed_patterns = list(config.cors_origins)
+    else:
+        allowed_patterns = [
+            "chrome-extension://*",
+            "moz-extension://*",
+            "vscode-webview://*",
+            "null",
+        ]
+
+    # Allow localhost origins only when auth_token is set (null origin allowed for local dashboard file)
+    if getattr(config, "auth_token", None):
+        for origin_pat in ("http://localhost:*", "http://127.0.0.1:*", "null"):
+            if origin_pat not in allowed_patterns:
+                allowed_patterns.append(origin_pat)
+    else:
+        allowed_patterns = [
+            pat for pat in allowed_patterns
+            if pat not in ("http://localhost:*", "http://127.0.0.1:*")
+        ]
+        if "null" not in allowed_patterns:
+            allowed_patterns.append("null")
+
     origin = request.headers.get("Origin", "") if request else ""
     matched_origin = None
     if origin:
@@ -90,7 +105,10 @@ async def handle_health(request):
     return web.json_response({"status": "ok"}, headers=cors_headers())
 
 async def handle_config(request):
-    return web.json_response(dataclasses.asdict(config), headers=cors_headers())
+    cfg_dict = dataclasses.asdict(config)
+    if cfg_dict.get("auth_token"):
+        cfg_dict["auth_token"] = "***REDACTED***"
+    return web.json_response(cfg_dict, headers=cors_headers(request))
 
 async def process_single_event(data):
     event = validate_and_create_event(data, config.strip_query_strings)
@@ -302,11 +320,18 @@ async def handle_get_manual(request):
         logger.error(f"Error fetching manual events: {e}")
         return web.json_response({"status": "error", "message": str(e)}, status=400, headers=cors_headers())
 
+async def handle_dashboard(request):
+    from pathlib import Path
+    dashboard_path = Path(config.data_directory) / "report" / "dashboard.html"
+    if dashboard_path.exists():
+        return web.FileResponse(dashboard_path)
+    return web.Response(text="Dashboard not found at Record/report/dashboard.html", status=404)
+
 async def handle_root(request):
     return web.json_response({
         "status": "ok",
         "service": "Activity Tracker Collector",
-        "endpoints": ["GET /health", "GET /config", "POST /event", "POST /events", "POST /api/sync-mobile", "POST /api/generate-report", "POST /api/manual", "GET /api/manual"]
+        "endpoints": ["GET /health", "GET /config", "GET /dashboard", "POST /event", "POST /events", "POST /api/sync-mobile", "POST /api/generate-report", "POST /api/manual", "GET /api/manual"]
     }, headers=cors_headers())
 
 app = web.Application(middlewares=[auth_and_cors_middleware])
@@ -314,6 +339,8 @@ app.router.add_get('/', handle_root)
 app.router.add_route('OPTIONS', '/{tail:.*}', handle_options)
 app.router.add_get('/health', handle_health)
 app.router.add_get('/config', handle_config)
+app.router.add_get('/dashboard', handle_dashboard)
+app.router.add_get('/report/dashboard.html', handle_dashboard)
 app.router.add_post('/event', handle_event)
 app.router.add_post('/events', handle_events)
 app.router.add_post('/api/sync-mobile', handle_sync_mobile)
@@ -340,6 +367,15 @@ def start_periodic_mobile_sync(interval_seconds: float = 1800.0):
     sync_thread.start()
 
 def main():
+    if not getattr(config, "auth_token", None):
+        logger.warning(
+            "\n" + "=" * 60 + "\n"
+            " [SECURITY WARNING] No auth_token configured in collector config!\n"
+            " The collector is running in insecure mode.\n"
+            " Any local client or browser script can submit events or read config.\n"
+            " Set 'auth_token' in config.json to secure your collector.\n"
+            + "=" * 60
+        )
     logger.info(f"Starting collector on {config.collector_host}:{config.collector_port}")
     logger.info(f"Data directory: {config.data_directory}")
     
@@ -350,7 +386,8 @@ def main():
             from collector.desktop_watcher import DesktopWatcher
             watcher = DesktopWatcher(
                 collector_url=f"http://{config.collector_host}:{config.collector_port}",
-                data_directory=config.data_directory
+                data_directory=config.data_directory,
+                min_session_duration=getattr(config, "raw_min_duration_seconds", 2.0)
             )
             watcher_thread = threading.Thread(target=watcher.start, daemon=True)
             watcher_thread.start()

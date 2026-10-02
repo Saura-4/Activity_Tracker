@@ -57,8 +57,18 @@ def find_unobserved_gaps(
             "followed_by": "Day end",
         }]
 
+    # Exclude idle, locked, sleep, and no_tracked_foreground status events from coverage
+    active_events = []
+    for ev in events:
+        ctx = ev.get("context", {})
+        status = (ctx.get("status") or "").lower()
+        app = (ctx.get("app") or "").lower()
+        if status in ("idle", "locked", "sleep", "no_tracked_foreground") or app in ("idle", "locked", "sleep", "no tracked foreground"):
+            continue
+        active_events.append(ev)
+
     # Build active intervals with context
-    parsed_sessions = sessionize_events(events)
+    parsed_sessions = sessionize_events(active_events)
     if not parsed_sessions:
         return []
 

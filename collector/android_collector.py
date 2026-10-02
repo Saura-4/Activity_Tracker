@@ -12,6 +12,8 @@ import re
 import json
 import uuid
 import shutil
+import time
+import contextlib
 import argparse
 import subprocess
 from pathlib import Path
@@ -229,6 +231,55 @@ def fetch_usagestats(adb_path: str, serial: str) -> str:
     return res.stdout
 
 
+def mobile_sync_lock(lock_dir: Path):
+    """Process-wide non-blocking lock to prevent concurrent mobile sync runs."""
+    @contextlib.contextmanager
+    def _lock():
+        lock_file = lock_dir / ".mobile_sync.lock"
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        f = open(lock_file, "a+", encoding="utf-8")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                try:
+                    msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError:
+                    raise BlockingIOError("Another mobile sync process is currently running.")
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    raise BlockingIOError("Another mobile sync process is currently running.")
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    f.seek(0)
+                    msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+            f.close()
+    return _lock()
+
+
+def atomic_replace_file(src: str, dst: Path, max_retries: int = 5, backoff: float = 0.1):
+    """Replace dst with src atomically, retrying on Windows PermissionError."""
+    for attempt in range(max_retries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(backoff * (2 ** attempt))
+
+
 def parse_usagestats_events(
     dumpsys_text: str,
     device_tz: timezone,
@@ -240,7 +291,8 @@ def parse_usagestats_events(
     """Parse discrete activity sessions from dumpsys usagestats event logs.
     
     Reconstructs sessions bounded by ACTIVITY_RESUMED and ACTIVITY_PAUSED/STOPPED,
-    clamped by SCREEN_INTERACTIVE, SCREEN_NON_INTERACTIVE, and keyguard events.
+    supporting multiple activities per package and clamped by SCREEN_INTERACTIVE,
+    SCREEN_NON_INTERACTIVE, and keyguard events.
     """
     if ignored_packages is None:
         ignored_packages = DEFAULT_IGNORED_PACKAGES
@@ -250,17 +302,21 @@ def parse_usagestats_events(
     elif now_dt.tzinfo is None:
         now_dt = now_dt.replace(tzinfo=device_tz)
 
-    event_re = re.compile(r'time="([^"]+)"\s+type=([A-Z_]+)(?:\s+package=([^\s]+))?')
-    
     raw_parsed_events = []
     for line in dumpsys_text.splitlines():
-        m = event_re.search(line)
-        if not m:
+        ts_m = re.search(r'time="([^"]+)"', line)
+        type_m = re.search(r'type=([A-Z_]+)', line)
+        if not ts_m or not type_m:
             continue
-        ts_str, evt_type, pkg = m.group(1), m.group(2), m.group(3)
+        ts_str = ts_m.group(1)
+        evt_type = type_m.group(1)
+        pkg_m = re.search(r'package=([^\s]+)', line)
+        cls_m = re.search(r'class=([^\s]+)', line)
+        pkg = pkg_m.group(1) if pkg_m else ""
+        cls = cls_m.group(1) if cls_m else ""
         try:
             dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=device_tz)
-            raw_parsed_events.append((dt, evt_type, pkg or ""))
+            raw_parsed_events.append((dt, evt_type, pkg, cls))
         except Exception:
             continue
 
@@ -272,7 +328,7 @@ def parse_usagestats_events(
     keyguard_shown = False
     last_screen_off_dt = None
 
-    for dt, evt_type, pkg in raw_parsed_events:
+    for dt, evt_type, pkg, cls in raw_parsed_events:
         if evt_type == "SCREEN_INTERACTIVE":
             screen_interactive = True
         elif evt_type == "SCREEN_NON_INTERACTIVE":
@@ -298,48 +354,96 @@ def parse_usagestats_events(
                 break
         return e_dt if e_dt > s_dt else None
 
-    active_resumed = {}
+    has_activity_stopped = any(evt[1] == "ACTIVITY_STOPPED" for evt in raw_parsed_events)
+    active_classes = {}    # pkg -> set of str (classes)
+    package_start = {}     # pkg -> datetime
+    paused_classes = {}    # pkg -> set of str (classes)
     sessions = []
 
-    for dt, evt_type, pkg in raw_parsed_events:
-        if pkg in ignored_packages:
+    def record_session(pkg: str, s_dt: datetime, e_dt: datetime):
+        clamped_end = clamp_session(s_dt, e_dt)
+        if not clamped_end or clamped_end <= s_dt:
+            return
+
+        dur = round((clamped_end - s_dt).total_seconds(), 1)
+        event_date = s_dt.strftime("%Y-%m-%d")
+        if target_date and event_date != target_date:
+            return
+
+        if dur >= min_duration_seconds:
+            s_iso = s_dt.isoformat()
+            e_iso = clamped_end.isoformat()
+            clean_id_ts = s_iso.replace(":", "-").replace("+", "_")
+            app_name = get_friendly_app_name(pkg)
+
+            sessions.append({
+                "id": f"mobile-{pkg}-{clean_id_ts}",
+                "start": s_iso,
+                "end": e_iso,
+                "duration_seconds": dur,
+                "source": "mobile",
+                "context": {
+                    "app": app_name,
+                    "package": pkg
+                }
+            })
+
+    for dt, evt_type, pkg, cls in raw_parsed_events:
+        if not pkg or pkg in ignored_packages:
             continue
 
+        cls_key = cls or "__default__"
+
         if evt_type == "ACTIVITY_RESUMED":
-            active_resumed[pkg] = dt
-        elif evt_type in ("ACTIVITY_PAUSED", "ACTIVITY_STOPPED") and pkg in active_resumed:
-            s_dt = active_resumed.pop(pkg)
-            e_dt = dt
+            if pkg not in package_start:
+                package_start[pkg] = dt
+                active_classes[pkg] = set()
+                paused_classes[pkg] = set()
+            active_classes[pkg].add(cls_key)
+            if pkg in paused_classes:
+                paused_classes[pkg].discard(cls_key)
 
-            clamped_end = clamp_session(s_dt, e_dt)
-            if not clamped_end:
-                continue
+            # Finalize any previously active non-ignored app that was fully paused
+            for other_pkg in list(package_start.keys()):
+                if other_pkg != pkg and other_pkg not in ignored_packages:
+                    if paused_classes.get(other_pkg) and paused_classes[other_pkg] >= active_classes.get(other_pkg, set()):
+                        s_dt = package_start.pop(other_pkg)
+                        active_classes.pop(other_pkg, None)
+                        paused_classes.pop(other_pkg, None)
+                        record_session(other_pkg, s_dt, dt)
 
-            dur = round((clamped_end - s_dt).total_seconds(), 1)
-            event_date = s_dt.strftime("%Y-%m-%d")
-            if target_date and event_date != target_date:
-                continue
+        elif evt_type == "ACTIVITY_PAUSED":
+            if pkg in active_classes:
+                paused_classes.setdefault(pkg, set()).add(cls_key)
+                if not has_activity_stopped or not cls:
+                    # If dumpsys doesn't have ACTIVITY_STOPPED or class is absent, PAUSED ends the session
+                    s_dt = package_start.pop(pkg, None)
+                    active_classes.pop(pkg, None)
+                    paused_classes.pop(pkg, None)
+                    if s_dt:
+                        record_session(pkg, s_dt, dt)
 
-            if dur >= min_duration_seconds:
-                s_iso = s_dt.isoformat()
-                e_iso = clamped_end.isoformat()
-                clean_id_ts = s_iso.replace(":", "-").replace("+", "_")
-                app_name = get_friendly_app_name(pkg)
+        elif evt_type == "ACTIVITY_STOPPED":
+            if pkg in active_classes:
+                if cls:
+                    active_classes[pkg].discard(cls_key)
+                    if pkg in paused_classes:
+                        paused_classes[pkg].discard(cls_key)
+                else:
+                    active_classes[pkg].clear()
+                    if pkg in paused_classes:
+                        paused_classes[pkg].clear()
 
-                sessions.append({
-                    "id": f"mobile-{pkg}-{clean_id_ts}",
-                    "start": s_iso,
-                    "end": e_iso,
-                    "duration_seconds": dur,
-                    "source": "mobile",
-                    "context": {
-                        "app": app_name,
-                        "package": pkg
-                    }
-                })
+                # If another activity of the same package is still resumed, IGNORE this stop!
+                if len(active_classes[pkg]) == 0:
+                    s_dt = package_start.pop(pkg, None)
+                    active_classes.pop(pkg, None)
+                    paused_classes.pop(pkg, None)
+                    if s_dt:
+                        record_session(pkg, s_dt, dt)
 
     # Currently active open sessions
-    for pkg, s_dt in active_resumed.items():
+    for pkg, s_dt in package_start.items():
         if pkg in ignored_packages:
             continue
 
@@ -400,8 +504,12 @@ def sync_mobile_activity(
     android_cfg = cfg.get("android", {})
     if not device_ip:
         device_ip = android_cfg.get("device_ip") or android_cfg.get("phone_ip")
-    if not device_ip:
-        raise ValueError("Android phone IP is not configured. Please set 'android.device_ip' or 'android.phone_ip' in config.json or pass via --ip.")
+    connected = get_connected_devices(adb_path)
+    if not device_ip and not connected:
+        raise ValueError(
+            "Android phone IP is not configured and no USB device is connected. "
+            "Please set 'android.device_ip' or 'android.phone_ip' in config.json, pass via --ip, or connect via USB."
+        )
     port = android_cfg.get("port", port)
 
     # Locate target device
@@ -412,108 +520,121 @@ def sync_mobile_activity(
             f"or connected via USB."
         )
 
-    print(f"Connecting to Android device [{serial}]...")
-    dev_tz = get_device_timezone(adb_path, serial)
-    if not target_date:
-        target_date = datetime.now(dev_tz).strftime("%Y-%m-%d")
-
-    d = datetime.strptime(target_date, "%Y-%m-%d")
-    year = str(d.year)
-    month = d.strftime("%b").lower()
-    raw_dir = Path(cfg["data_directory"]) / "raw" / year / month / "daily" / "mobile"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    raw_file = raw_dir / f"{target_date}.jsonl"
-
-    print(f"Querying usagestats on device for date {target_date}...")
-    output = fetch_usagestats(adb_path, serial)
-
-    # Ignored packages configuration
-    ignored = set(android_cfg.get("ignore_packages", list(DEFAULT_IGNORED_PACKAGES)))
-    effective_min_dur = min_duration_seconds if min_duration_seconds is not None else float(cfg.get("raw_min_duration_seconds", 2.0))
-    sessions = parse_usagestats_events(output, dev_tz, target_date=target_date, min_duration_seconds=effective_min_dur, ignored_packages=ignored)
-
-    if not sessions:
-        print(f"No mobile app sessions recorded for {target_date}.")
-        return {"synced_count": 0, "total_seconds": 0.0, "apps": {}}
-
-    # Read existing events from raw file to support updating in-progress sessions
-    existing_events = []
-    existing_map = {}
-    if raw_file.exists():
-        with open(raw_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    ev = json.loads(line)
-                    existing_events.append(ev)
-                    if "id" in ev:
-                        existing_map[ev["id"]] = len(existing_events) - 1
-                except Exception:
-                    pass
-
-    # Merge / update sessions
-    updated_count = 0
-    new_count = 0
-    for s in sessions:
-        sid = s["id"]
-        if sid in existing_map:
-            idx = existing_map[sid]
-            old_dur = float(existing_events[idx].get("duration_seconds", 0.0))
-            new_dur = float(s["duration_seconds"])
-            if new_dur > old_dur:
-                existing_events[idx] = s
-                updated_count += 1
+    with mobile_sync_lock(Path(cfg["data_directory"])):
+        print(f"Connecting to Android device [{serial}]...")
+        dev_tz = get_device_timezone(adb_path, serial)
+        if not target_date:
+            today_dt = datetime.now(dev_tz)
+            yesterday_dt = today_dt - timedelta(days=1)
+            dates_to_sync = [yesterday_dt.strftime("%Y-%m-%d"), today_dt.strftime("%Y-%m-%d")]
         else:
-            existing_events.append(s)
-            existing_map[sid] = len(existing_events) - 1
-            new_count += 1
+            dates_to_sync = [target_date]
 
-    # Atomically rewrite raw file if any changes (write to temp, then rename)
-    if updated_count > 0 or new_count > 0:
-        tmp_file = str(raw_file) + ".tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            for ev in existing_events:
-                f.write(json.dumps(ev) + "\n")
-        os.replace(tmp_file, raw_file)
+        print(f"Querying usagestats on device for dates: {', '.join(dates_to_sync)}...")
+        output = fetch_usagestats(adb_path, serial)
 
-    # Aggregate summary of synced data for output display
-    app_totals = {}
-    total_secs = 0.0
-    for s in sessions:
-        dur = s["duration_seconds"]
-        app = s["context"]["app"]
-        app_totals[app] = app_totals.get(app, 0.0) + dur
-        total_secs += dur
+        # Ignored packages configuration
+        ignored = set(android_cfg.get("ignore_packages", list(DEFAULT_IGNORED_PACKAGES)))
+        effective_min_dur = min_duration_seconds if min_duration_seconds is not None else float(cfg.get("raw_min_duration_seconds", 2.0))
 
-    sorted_apps = sorted(app_totals.items(), key=lambda x: x[1], reverse=True)
+        results = []
+        for d_str in dates_to_sync:
+            d = datetime.strptime(d_str, "%Y-%m-%d")
+            year = str(d.year)
+            month = d.strftime("%b").lower()
+            raw_dir = Path(cfg["data_directory"]) / "raw" / year / month / "daily" / "mobile"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            raw_file = raw_dir / f"{d_str}.jsonl"
 
-    print("\n========================================================")
-    print(f" Mobile Screen Time Sync Complete for {target_date}")
-    print("========================================================")
-    print(f" Total Active Screen Time : {int(total_secs // 3600)}h {int((total_secs % 3600) // 60)}m {int(total_secs % 60)}s")
-    print(f" Total Sessions Found     : {len(sessions)} (New: {new_count}, Live Updated: {updated_count})")
-    print(f" Target File              : {raw_file}")
-    print("--------------------------------------------------------")
-    print(f" {'App':<25} | {'Duration':<12} | {'Percentage':<8}")
-    print("--------------------------------------------------------")
-    for app, dur in sorted_apps[:15]:
-        pct = (dur / total_secs * 100) if total_secs > 0 else 0
-        m = int(dur // 60)
-        s = int(dur % 60)
-        dur_str = f"{m}m {s}s"
-        print(f" {app:<25} | {dur_str:<12} | {pct:5.1f}%")
-    print("========================================================\n")
+            sessions = parse_usagestats_events(
+                output, dev_tz, target_date=d_str, min_duration_seconds=effective_min_dur, ignored_packages=ignored
+            )
 
-    return {
-        "new_count": new_count,
-        "updated_count": updated_count,
-        "total_sessions": len(sessions),
-        "total_seconds": round(total_secs, 1),
-        "apps": {app: round(dur, 1) for app, dur in sorted_apps},
-        "target_file": str(raw_file)
-    }
+            if not sessions:
+                print(f"No mobile app sessions recorded for {d_str}.")
+                results.append({"synced_count": 0, "total_seconds": 0.0, "apps": {}, "target_file": str(raw_file)})
+                continue
+
+            # Read existing events from raw file to support updating in-progress sessions
+            existing_events = []
+            existing_map = {}
+            if raw_file.exists():
+                with open(raw_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                            existing_events.append(ev)
+                            if "id" in ev:
+                                existing_map[ev["id"]] = len(existing_events) - 1
+                        except Exception:
+                            pass
+
+            # Merge / update sessions
+            updated_count = 0
+            new_count = 0
+            for s in sessions:
+                sid = s["id"]
+                if sid in existing_map:
+                    idx = existing_map[sid]
+                    old_dur = float(existing_events[idx].get("duration_seconds", 0.0))
+                    new_dur = float(s["duration_seconds"])
+                    if new_dur > old_dur:
+                        existing_events[idx] = s
+                        updated_count += 1
+                else:
+                    existing_events.append(s)
+                    existing_map[sid] = len(existing_events) - 1
+                    new_count += 1
+
+            # Atomically rewrite raw file if any changes (write to temp, then rename with retry)
+            if updated_count > 0 or new_count > 0:
+                tmp_file = str(raw_file) + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    for ev in existing_events:
+                        f.write(json.dumps(ev) + "\n")
+                atomic_replace_file(tmp_file, raw_file)
+
+            # Aggregate summary of synced data for output display
+            app_totals = {}
+            total_secs = 0.0
+            for s in sessions:
+                dur = s["duration_seconds"]
+                app = s["context"]["app"]
+                app_totals[app] = app_totals.get(app, 0.0) + dur
+                total_secs += dur
+
+            sorted_apps = sorted(app_totals.items(), key=lambda x: x[1], reverse=True)
+
+            print("\n========================================================")
+            print(f" Mobile Screen Time Sync Complete for {d_str}")
+            print("========================================================")
+            print(f" Total Active Screen Time : {int(total_secs // 3600)}h {int((total_secs % 3600) // 60)}m {int(total_secs % 60)}s")
+            print(f" Total Sessions Found     : {len(sessions)} (New: {new_count}, Live Updated: {updated_count})")
+            print(f" Target File              : {raw_file}")
+            print("--------------------------------------------------------")
+            print(f" {'App':<25} | {'Duration':<12} | {'Percentage':<8}")
+            print("--------------------------------------------------------")
+            for app, dur in sorted_apps[:15]:
+                pct = (dur / total_secs * 100) if total_secs > 0 else 0
+                m = int(dur // 60)
+                s = int(dur % 60)
+                dur_str = f"{m}m {s}s"
+                print(f" {app:<25} | {dur_str:<12} | {pct:5.1f}%")
+            print("========================================================\n")
+
+            results.append({
+                "new_count": new_count,
+                "updated_count": updated_count,
+                "total_sessions": len(sessions),
+                "total_seconds": round(total_secs, 1),
+                "apps": {app: round(dur, 1) for app, dur in sorted_apps},
+                "target_file": str(raw_file)
+            })
+
+        return results[-1] if results else {"synced_count": 0, "total_seconds": 0.0, "apps": {}}
 
 
 def main():
