@@ -1,11 +1,12 @@
 import json
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List
 
 _lock = threading.Lock()
-_recent_ids = set()
+_recent_ids: OrderedDict = OrderedDict()
 _current_date = None
 
 def get_file_path(data_dir: str, dt: datetime) -> Path:
@@ -19,9 +20,9 @@ def get_file_path(data_dir: str, dt: datetime) -> Path:
 def append_event(config, event_data: Dict[str, Any]) -> bool:
     global _current_date, _recent_ids
     
-    min_dur = getattr(config, "min_duration_seconds", 40.0) if config else 40.0
+    raw_min_dur = getattr(config, "raw_min_duration_seconds", 2.0) if config else 2.0
     dur = float(event_data.get("duration_seconds", 0.0))
-    if dur < min_dur:
+    if dur < raw_min_dur:
         return False
 
     start_dt = datetime.fromisoformat(event_data["start"].replace('Z', '+00:00')).astimezone()
@@ -37,9 +38,10 @@ def append_event(config, event_data: Dict[str, Any]) -> bool:
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event_data) + "\n")
             
-        _recent_ids.add(evt_id)
+        _recent_ids[evt_id] = True
         if len(_recent_ids) > 10000:
-            _recent_ids = set(list(_recent_ids)[-5000:])
+            while len(_recent_ids) > 5000:
+                _recent_ids.popitem(last=False)
             
     return True
 

@@ -24,8 +24,13 @@
         },
         "activityTracker.minSessionDuration": {
           "type": "number",
-          "default": 40,
+          "default": 2,
           "description": "Minimum session duration in seconds to record"
+        },
+        "activityTracker.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Optional shared secret token for collector authentication"
         }
       }
     },

@@ -81,15 +81,15 @@ class TestBrowserToVscode:
         assert report["summary"]["browser_seconds"] == 900
         assert report["summary"]["vscode_seconds"] == 900
         assert report["summary"]["session_count"] == 2
-        assert report["summary"]["context_switches"] == 1
+        assert "context_switches" not in report["summary"]
 
 
 # =============================================================================
 # Test: VS Code file switch
 # =============================================================================
 class TestVscodeFileSwitch:
-    def test_vscode_file_switch(self):
-        """File A active 10:00-10:20, File B active 10:20-10:40. Each gets 20 min."""
+    def test_vscode_file_switch_same_workspace(self):
+        """File A active 10:00-10:20, File B active 10:20-10:40 within same workspace merge into 1 session."""
         events = [
             make_vscode_event(ts(10, 0), ts(10, 20), "RAG-Studio", "src/retriever.py", "python"),
             make_vscode_event(ts(10, 20), ts(10, 40), "RAG-Studio", "src/evaluator.py", "python"),
@@ -99,13 +99,12 @@ class TestVscodeFileSwitch:
 
         assert report["summary"]["total_active_seconds"] == 2400  # 40 min
         assert report["summary"]["vscode_seconds"] == 2400
-        assert report["summary"]["session_count"] == 2
+        assert report["summary"]["session_count"] == 1
 
-        # Both files should be in the workspace
         ws = report["workspaces"][0]
         assert ws["workspace"] == "RAG-Studio"
         assert ws["duration_seconds"] == 2400
-        assert ws["files_touched"] == 2
+        assert ws["session_count"] == 1
 
 
 # =============================================================================
@@ -278,7 +277,7 @@ class TestConcurrentBrowserVscode:
         assert report["summary"]["browser_seconds"] == 1200  # 20 min
         assert report["summary"]["vscode_seconds"] == 1200  # 20 min
         assert report["summary"]["session_count"] == 4
-        assert report["summary"]["context_switches"] == 3
+        assert "context_switches" not in report["summary"]
 
 
 # =============================================================================
@@ -309,7 +308,7 @@ class TestDomainAggregation:
 # =============================================================================
 class TestWorkspaceAggregation:
     def test_workspace_aggregation(self):
-        """Multiple files in same workspace. Workspace total = sum of file sessions."""
+        """Contiguous events in same workspace merge into 1 session without language/files_touched."""
         events = [
             make_vscode_event(ts(10, 0), ts(10, 15), "RAG-Studio", "src/retriever.py", "python"),
             make_vscode_event(ts(10, 15), ts(10, 30), "RAG-Studio", "src/evaluator.py", "python"),
@@ -321,10 +320,9 @@ class TestWorkspaceAggregation:
         ws = report["workspaces"][0]
         assert ws["workspace"] == "RAG-Studio"
         assert ws["duration_seconds"] == 2700  # 45 min
-        assert ws["session_count"] == 3
-        assert ws["files_touched"] == 3
-        assert ws["languages"]["python"] == 1800  # 30 min
-        assert ws["languages"]["typescript"] == 900  # 15 min
+        assert ws["session_count"] == 1
+        assert "files_touched" not in ws
+        assert "languages" not in ws
 
 
 # =============================================================================
@@ -369,7 +367,7 @@ class TestEmptyDay:
 
         assert report["summary"]["total_active_seconds"] == 0
         assert report["summary"]["session_count"] == 0
-        assert report["summary"]["context_switches"] == 0
+        assert "context_switches" not in report["summary"]
         assert report["domains"] == []
         assert report["workspaces"] == []
         assert report["timeline"] == []
@@ -384,29 +382,30 @@ class TestEmptyDay:
 
         assert report["summary"]["total_active_seconds"] == 0
         assert report["summary"]["session_count"] == 0
+        assert "context_switches" not in report["summary"]
 
 
 # =============================================================================
-# Test: Context switches count
+# Test: Context switches removed per Phase 5
 # =============================================================================
-class TestContextSwitches:
-    def test_context_switches(self):
-        """N sessions = N-1 context switches."""
+class TestContextSwitchesRemoved:
+    def test_context_switches_not_in_summary(self):
+        """context_switches has been removed from summary per Phase 5."""
         events = [
             make_browser_event(ts(10, 0), ts(10, 5), "a.com", "A"),
-            make_vscode_event(ts(10, 5), ts(10, 10), "Proj", "f1.py", "python"),
+            make_vscode_event(ts(10, 5), ts(10, 10), "Proj"),
             make_browser_event(ts(10, 10), ts(10, 15), "b.com", "B"),
-            make_vscode_event(ts(10, 15), ts(10, 20), "Proj", "f2.py", "python"),
+            make_vscode_event(ts(10, 15), ts(10, 20), "Proj"),
             make_browser_event(ts(10, 20), ts(10, 25), "c.com", "C"),
         ]
 
         report = aggregate_events(events)
 
         assert report["summary"]["session_count"] == 5
-        assert report["summary"]["context_switches"] == 4
+        assert "context_switches" not in report["summary"]
 
-    def test_single_session_zero_switches(self):
-        """1 session = 0 context switches."""
+    def test_single_session_no_context_switches(self):
+        """1 session = no context_switches key."""
         events = [
             make_browser_event(ts(10, 0), ts(10, 30), "github.com", "GitHub"),
         ]
@@ -414,7 +413,7 @@ class TestContextSwitches:
         report = aggregate_events(events)
 
         assert report["summary"]["session_count"] == 1
-        assert report["summary"]["context_switches"] == 0
+        assert "context_switches" not in report["summary"]
 
 
 # =============================================================================
@@ -427,7 +426,7 @@ class TestHourlyBreakdown:
             # Entirely within hour 10
             make_browser_event(ts(10, 10), ts(10, 40), "github.com", "GitHub"),
             # Spans hour 10 -> 11
-            make_vscode_event(ts(10, 45), ts(11, 15), "Proj", "f.py", "python"),
+            make_vscode_event(ts(10, 45), ts(11, 15), "Proj"),
         ]
 
         report = aggregate_events(events)
@@ -455,6 +454,25 @@ class TestHourlyBreakdown:
         assert 14 in hourly
         assert hourly[14]["active_seconds"] == 1800
         assert hourly[14]["browser_seconds"] == 1800
+
+    def test_overlapping_pc_and_mobile_hourly_union(self):
+        """PC and mobile overlapping in one hour should have hourly active_seconds
+        computed as the interval union, not naive sum capped at 3600."""
+        from tests.conftest import make_mobile_event
+        events = [
+            # PC: 10:00 to 10:40 (40 min = 2400s)
+            make_browser_event(ts(10, 0), ts(10, 40), "github.com", "GitHub"),
+            # Mobile: 10:20 to 10:50 (30 min = 1800s)
+            make_mobile_event(ts(10, 20), ts(10, 50), "WhatsApp", "com.whatsapp"),
+        ]
+        report = aggregate_events(events)
+        hourly = {h["hour"]: h for h in report["hourly_breakdown"]}
+        assert 10 in hourly
+        assert hourly[10]["browser_seconds"] == 2400.0
+        assert hourly[10]["mobile_seconds"] == 1800.0
+        # Union of [10:00, 10:40] and [10:20, 10:50] is [10:00, 10:50] = 50 min = 3000s
+        # (NOT 2400 + 1800 = 4200, and NOT capped 3600)
+        assert hourly[10]["active_seconds"] == 3000.0
 
 
 # =============================================================================
@@ -528,9 +546,9 @@ class TestReadEvents:
 # =============================================================================
 # Test: Language aggregation
 # =============================================================================
-class TestLanguageAggregation:
-    def test_language_breakdown(self):
-        """Languages are aggregated across workspaces."""
+class TestWorkspaceMergeAcrossWorkspaces:
+    def test_workspace_merge_and_no_languages_section(self):
+        """Old events with file and language still merge by workspace; report drops languages section."""
         events = [
             make_vscode_event(ts(10, 0), ts(10, 20), "ProjA", "a.py", "python"),
             make_vscode_event(ts(10, 20), ts(10, 35), "ProjA", "b.ts", "typescript"),
@@ -539,11 +557,12 @@ class TestLanguageAggregation:
 
         report = aggregate_events(events)
 
-        lang_map = {l["language"]: l for l in report["languages"]}
-        assert lang_map["python"]["duration_seconds"] == 2400  # 40 min
-        assert lang_map["python"]["session_count"] == 2
-        assert lang_map["typescript"]["duration_seconds"] == 900  # 15 min
-        assert lang_map["typescript"]["session_count"] == 1
+        assert "languages" not in report
+        ws_map = {w["workspace"]: w for w in report["workspaces"]}
+        assert ws_map["ProjA"]["duration_seconds"] == 2100  # 35 min
+        assert ws_map["ProjA"]["session_count"] == 1
+        assert ws_map["ProjB"]["duration_seconds"] == 1200  # 20 min
+        assert ws_map["ProjB"]["session_count"] == 1
 
 
 # =============================================================================
@@ -586,7 +605,7 @@ class TestRequirement13A_SameContextSmallGap:
         assert report["summary"]["vscode_seconds"] == 900.0
         # Observed span is wall-clock time from 10:00:00 to 10:15:05 (905s)
         assert report["summary"]["observed_span_seconds"] == 905.0
-        assert report["summary"]["context_switches"] == 0
+        assert "context_switches" not in report["summary"]
         assert report["timeline"][0]["raw_event_count"] == 2
 
 
@@ -608,8 +627,8 @@ class TestRequirement13B_SameContextLargeGap:
         assert report["summary"]["total_active_seconds"] == 840.0
         # Inactive gap (60s) is not active time
         assert report["summary"]["observed_span_seconds"] == 900.0  # 10:00 to 10:15 = 15 min
-        # Same context paused and resumed: 0 context switches
-        assert report["summary"]["context_switches"] == 0
+        # Same context paused and resumed: no context switches key
+        assert "context_switches" not in report["summary"]
 
 
 # =============================================================================
@@ -618,7 +637,7 @@ class TestRequirement13B_SameContextLargeGap:
 class TestRequirement13C_ContextSwitchChatGPTToYouTube:
     def test_chatgpt_to_youtube_switch(self):
         """ChatGPT -> YouTube.
-        Expected: 2 sessions, 1 context switch.
+        Expected: 2 sessions.
         """
         e1 = make_browser_event(ts(10, 0, 0), ts(10, 10, 0), "chatgpt.com", "ChatGPT", "https://chatgpt.com/")
         e2 = make_browser_event(ts(10, 10, 0), ts(10, 20, 0), "youtube.com", "YouTube", "https://youtube.com/")
@@ -626,7 +645,7 @@ class TestRequirement13C_ContextSwitchChatGPTToYouTube:
         report = aggregate_events([e1, e2], merge_gap_seconds=30.0)
 
         assert report["summary"]["session_count"] == 2
-        assert report["summary"]["context_switches"] == 1
+        assert "context_switches" not in report["summary"]
         assert len(report["domains"]) == 2
         domain_names = {d["domain"] for d in report["domains"]}
         assert domain_names == {"chatgpt.com", "youtube.com"}
@@ -638,7 +657,7 @@ class TestRequirement13C_ContextSwitchChatGPTToYouTube:
 class TestRequirement13D_BrowserToVSCode:
     def test_browser_to_vscode_switch(self):
         """Browser -> VS Code.
-        Expected: 2 sessions, 1 context switch.
+        Expected: 2 sessions.
         """
         e1 = make_browser_event(ts(10, 0, 0), ts(10, 10, 0), "chatgpt.com", "ChatGPT")
         e2 = make_vscode_event(ts(10, 10, 0), ts(10, 20, 0), "RAG-Studio", "src/retriever.py", "python")
@@ -646,7 +665,7 @@ class TestRequirement13D_BrowserToVSCode:
         report = aggregate_events([e1, e2], merge_gap_seconds=30.0)
 
         assert report["summary"]["session_count"] == 2
-        assert report["summary"]["context_switches"] == 1
+        assert "context_switches" not in report["summary"]
         assert report["summary"]["browser_seconds"] == 600.0
         assert report["summary"]["vscode_seconds"] == 600.0
 
@@ -671,7 +690,7 @@ class TestRequirement13E_SameVSCodeFileFragmentedEvents:
         assert report["summary"]["session_count"] == 1
         # Active duration is 20s + 16s + 35s = 71.0s (not 86s wall-clock)
         assert report["summary"]["total_active_seconds"] == 71.0
-        assert report["summary"]["context_switches"] == 0
+        assert "context_switches" not in report["summary"]
         assert report["timeline"][0]["raw_event_count"] == 3
 
 
@@ -679,20 +698,29 @@ class TestRequirement13E_SameVSCodeFileFragmentedEvents:
 # Requirement 13F: Different VS Code files
 # =============================================================================
 class TestRequirement13F_DifferentVSCodeFiles:
-    def test_different_vscode_files_not_merged(self):
-        """requirements-dev.txt -> generate_report.py.
-        Expected: 2 logical sessions, 1 context switch even with small gap.
+    def test_same_workspace_different_files_merged(self):
+        """requirements-dev.txt -> generate_report.py in same workspace 'AW'.
+        Expected: 1 logical session (context is workspace only), context in report has workspace only.
         """
         e1 = make_vscode_event(ts(10, 0, 0), ts(10, 10, 0), "AW", "requirements-dev.txt", "pip-requirements")
         e2 = make_vscode_event(ts(10, 10, 5), ts(10, 20, 0), "AW", "generate_report.py", "python")
 
         report = aggregate_events([e1, e2], merge_gap_seconds=30.0)
 
+        assert report["summary"]["session_count"] == 1
+        assert "context_switches" not in report["summary"]
+        assert len(report["timeline"]) == 1
+        assert report["timeline"][0]["context"] == {"workspace": "AW"}
+
+    def test_different_workspaces_not_merged(self):
+        """Different workspaces remain separate sessions."""
+        e1 = make_vscode_event(ts(10, 0, 0), ts(10, 10, 0), "AW", "requirements-dev.txt", "pip-requirements")
+        e2 = make_vscode_event(ts(10, 10, 5), ts(10, 20, 0), "OtherProject", "generate_report.py", "python")
+
+        report = aggregate_events([e1, e2], merge_gap_seconds=30.0)
+
         assert report["summary"]["session_count"] == 2
-        assert report["summary"]["context_switches"] == 1
-        assert len(report["timeline"]) == 2
-        assert report["timeline"][0]["context"]["file"] == "requirements-dev.txt"
-        assert report["timeline"][1]["context"]["file"] == "generate_report.py"
+        assert "context_switches" not in report["summary"]
 
 
 # =============================================================================
@@ -727,7 +755,7 @@ class TestRequirement13G_MixedTimestampFormats:
         assert report["summary"]["total_active_seconds"] == 590.0
         assert report["summary"]["browser_seconds"] == 180.0
         assert report["summary"]["vscode_seconds"] == 410.0
-        assert report["summary"]["context_switches"] == 1
+        assert "context_switches" not in report["summary"]
         # Chronological order verified: browser first, then vscode
         assert report["timeline"][0]["source"] == "browser"
         assert report["timeline"][1]["source"] == "vscode"
@@ -776,7 +804,7 @@ class TestRequirement13H_ReportRegeneration:
         assert rep2["summary"]["total_active_seconds"] == 2100.0  # 900s + 1200s
         assert rep2["summary"]["browser_seconds"] == 900.0
         assert rep2["summary"]["vscode_seconds"] == 1200.0
-        assert rep2["summary"]["context_switches"] == 1
+        assert "context_switches" not in rep2["summary"]
         # Read saved report from disk to ensure clean overwrite
         saved_report_path = tmp_data_dir / "reports" / f"{date_str}.json"
         with open(saved_report_path, "r", encoding="utf-8") as f:
@@ -818,7 +846,7 @@ class TestMobileSessionization:
         report = aggregate_events(events)
 
         assert report["summary"]["session_count"] == 3
-        assert report["summary"]["context_switches"] == 2
+        assert "context_switches" not in report["summary"]
         assert report["summary"]["browser_seconds"] == 1800.0
         assert report["summary"]["vscode_seconds"] == 1800.0
         assert report["summary"]["mobile_seconds"] == 1200.0
@@ -869,7 +897,7 @@ class TestDesktopSessionization:
         report = aggregate_events(events)
 
         assert report["summary"]["session_count"] == 4
-        assert report["summary"]["context_switches"] == 3
+        assert "context_switches" not in report["summary"]
         assert report["summary"]["browser_seconds"] == 1800.0
         assert report["summary"]["vscode_seconds"] == 1800.0
         assert report["summary"]["desktop_seconds"] == 2700.0
@@ -957,33 +985,86 @@ class TestMinimumDurationFiltering:
         assert "quick-glance.com" not in domains
         assert "deep-read.com" in domains
         assert report["summary"]["total_active_seconds"] == 95.0
+        assert report["summary"]["brief_seconds"] == 15.0
+        assert report["summary"]["brief_session_count"] == 1
 
-    def test_storage_append_event_discards_sub_40s(self, tmp_path):
-        """Storage append_event should discard events with duration_seconds < min_duration_seconds."""
+    def test_storage_append_event_discards_sub_raw_min(self, tmp_path):
+        """Storage append_event should discard events with duration_seconds < raw_min_duration_seconds."""
         from collector.storage import append_event
         from collector.config import Config
 
-        cfg = Config(data_directory=str(tmp_path), min_duration_seconds=40.0)
+        cfg = Config(data_directory=str(tmp_path), raw_min_duration_seconds=2.0)
 
-        short_event = {
-            "id": "short-1",
+        sub_raw_event = {
+            "id": "sub-raw-1",
             "start": ts(10, 0, 0),
-            "end": ts(10, 0, 15),
-            "duration_seconds": 15.0,
+            "end": ts(10, 0, 1),
+            "duration_seconds": 1.0,
             "source": "browser",
-            "context": {"domain": "short.com"}
+            "context": {"domain": "glitch.com"}
         }
-        long_event = {
-            "id": "long-1",
-            "start": ts(10, 1, 0),
-            "end": ts(10, 2, 0),
-            "duration_seconds": 60.0,
+        valid_raw_event = {
+            "id": "raw-1",
+            "start": ts(10, 0, 0),
+            "end": ts(10, 0, 20),
+            "duration_seconds": 20.0,
             "source": "browser",
-            "context": {"domain": "long.com"}
+            "context": {"domain": "valid.com"}
         }
 
-        assert append_event(cfg, short_event) is False
-        assert append_event(cfg, long_event) is True
+        assert append_event(cfg, sub_raw_event) is False
+        assert append_event(cfg, valid_raw_event) is True
+
+    def test_raw_storage_keeps_sub_40s_fragments_and_merges_to_71s(self, tmp_path):
+        """Fragments of 20s, 16s and 35s are kept in raw storage and merge into one 71s session in report."""
+        from collector.storage import append_event, read_events
+        from collector.config import Config
+
+        cfg = Config(data_directory=str(tmp_path), raw_min_duration_seconds=2.0, min_duration_seconds=40.0)
+
+        # Three raw fragments under 40s each, but >= raw_min_duration_seconds (2s)
+        frag1 = {
+            "id": "frag-1",
+            "start": ts(10, 0, 0),
+            "end": ts(10, 0, 20),
+            "duration_seconds": 20.0,
+            "source": "browser",
+            "context": {"browser": "chrome", "domain": "github.com", "title": "Repo", "url": "https://github.com"}
+        }
+        frag2 = {
+            "id": "frag-2",
+            "start": ts(10, 0, 22),
+            "end": ts(10, 0, 38),
+            "duration_seconds": 16.0,
+            "source": "browser",
+            "context": {"browser": "chrome", "domain": "github.com", "title": "Repo", "url": "https://github.com"}
+        }
+        frag3 = {
+            "id": "frag-3",
+            "start": ts(10, 0, 40),
+            "end": ts(10, 1, 15),
+            "duration_seconds": 35.0,
+            "source": "browser",
+            "context": {"browser": "chrome", "domain": "github.com", "title": "Repo", "url": "https://github.com"}
+        }
+
+        # All 3 fragments must be kept in raw storage
+        assert append_event(cfg, frag1) is True
+        assert append_event(cfg, frag2) is True
+        assert append_event(cfg, frag3) is True
+
+        stored_events = read_events(cfg, "2026-09-29")
+        assert len(stored_events) == 3
+
+        # When aggregated with 40s min_duration_seconds, they merge into one 71s session
+        report = aggregate_events(stored_events, merge_gap_seconds=30.0, min_session_duration=40.0)
+        assert report["summary"]["session_count"] == 1
+        assert report["summary"]["total_active_seconds"] == 71.0
+        assert report["summary"]["brief_seconds"] == 0.0
+        assert report["summary"]["brief_session_count"] == 0
+        assert len(report["timeline"]) == 1
+        assert report["timeline"][0]["duration_seconds"] == 71.0
+        assert report["timeline"][0]["raw_event_count"] == 3
 
 
 # =============================================================================
@@ -1134,7 +1215,522 @@ class TestManualActivityAndGapAnnotation:
         assert hourly[10]["active_seconds"] == 1800.0
 
 
+# =============================================================================
+# Requirement Phase 2: Android Screen State Accuracy & Mobile Sync Separation
+# =============================================================================
+class TestAndroidScreenStateAndIdleAccuracy:
+    def test_session_clamped_by_screen_non_interactive(self):
+        """A session must clamp to the screen-off timestamp if screen turned off before pause."""
+        from collector.android_collector import parse_usagestats_events
+        dev_tz = timezone(timedelta(hours=5, minutes=30))
+        sample_dumpsys = """
+time="2026-09-29 10:00:00" type=SCREEN_INTERACTIVE package=android
+time="2026-09-29 10:00:05" type=KEYGUARD_HIDDEN package=android
+time="2026-09-29 10:00:10" type=ACTIVITY_RESUMED package=com.whatsapp
+time="2026-09-29 10:05:00" type=SCREEN_NON_INTERACTIVE package=android
+time="2026-09-29 10:10:00" type=ACTIVITY_PAUSED package=com.whatsapp
+"""
+        sessions = parse_usagestats_events(sample_dumpsys, dev_tz, min_duration_seconds=2.0)
+        assert len(sessions) == 1
+        s = sessions[0]
+        assert s["context"]["app"] == "WhatsApp"
+        # Must be clamped at 10:05:00, not 10:10:00!
+        assert s["start"] == "2026-09-29T10:00:10+05:30"
+        assert s["end"] == "2026-09-29T10:05:00+05:30"
+        assert s["duration_seconds"] == 290.0
+
+    def test_session_clamped_by_keyguard_shown(self):
+        """A session must clamp to KEYGUARD_SHOWN timestamp."""
+        from collector.android_collector import parse_usagestats_events
+        dev_tz = timezone(timedelta(hours=5, minutes=30))
+        sample_dumpsys = """
+time="2026-09-29 10:00:00" type=SCREEN_INTERACTIVE package=android
+time="2026-09-29 10:00:05" type=KEYGUARD_HIDDEN package=android
+time="2026-09-29 10:00:10" type=ACTIVITY_RESUMED package=com.twitter.android
+time="2026-09-29 10:04:00" type=KEYGUARD_SHOWN package=com.android.systemui
+time="2026-09-29 10:15:00" type=ACTIVITY_PAUSED package=com.twitter.android
+"""
+        sessions = parse_usagestats_events(sample_dumpsys, dev_tz, min_duration_seconds=2.0)
+        assert len(sessions) == 1
+        s = sessions[0]
+        assert s["start"] == "2026-09-29T10:00:10+05:30"
+        assert s["end"] == "2026-09-29T10:04:00+05:30"
+        assert s["duration_seconds"] == 230.0
+
+    def test_open_session_never_ends_at_now_if_screen_off(self):
+        """An open session must clamp to the last screen-off time and NEVER end at now if screen is currently off."""
+        from collector.android_collector import parse_usagestats_events
+        dev_tz = timezone(timedelta(hours=5, minutes=30))
+        sample_dumpsys = """
+time="2026-09-29 10:00:00" type=SCREEN_INTERACTIVE package=android
+time="2026-09-29 10:00:05" type=KEYGUARD_HIDDEN package=android
+time="2026-09-29 10:00:10" type=ACTIVITY_RESUMED package=com.reddit.frontpage
+time="2026-09-29 10:05:00" type=SCREEN_NON_INTERACTIVE package=android
+"""
+        # Current time is 10:30:00, but screen turned off at 10:05:00
+        now_dt = datetime(2026, 9, 29, 10, 30, 0, tzinfo=dev_tz)
+        sessions = parse_usagestats_events(sample_dumpsys, dev_tz, min_duration_seconds=2.0, now_dt=now_dt)
+        assert len(sessions) == 1
+        s = sessions[0]
+        # Must end at 10:05:00, NOT now_dt (10:30:00)
+        assert s["end"] == "2026-09-29T10:05:00+05:30"
+        assert s["duration_seconds"] == 290.0
+
+    def test_open_session_ends_at_now_if_screen_on(self):
+        """An open session ends at now_dt if the screen is currently interactive."""
+        from collector.android_collector import parse_usagestats_events
+        dev_tz = timezone(timedelta(hours=5, minutes=30))
+        sample_dumpsys = """
+time="2026-09-29 10:00:00" type=SCREEN_INTERACTIVE package=android
+time="2026-09-29 10:00:05" type=KEYGUARD_HIDDEN package=android
+time="2026-09-29 10:00:10" type=ACTIVITY_RESUMED package=com.reddit.frontpage
+"""
+        now_dt = datetime(2026, 9, 29, 10, 10, 10, tzinfo=dev_tz)
+        sessions = parse_usagestats_events(sample_dumpsys, dev_tz, min_duration_seconds=2.0, now_dt=now_dt)
+        assert len(sessions) == 1
+        s = sessions[0]
+        assert s["end"] == "2026-09-29T10:10:10+05:30"
+        assert s["duration_seconds"] == 600.0
 
 
+class TestMobileSyncSeparation:
+    def test_read_day_events_reads_both_pc_and_mobile_files(self, tmp_path):
+        """read_day_events reads both raw/YYYY/mmm/daily/DATE.jsonl and raw/YYYY/mmm/daily/mobile/DATE.jsonl."""
+        from reporting.generate_report import read_day_events
+        data_dir = tmp_path
+        
+        # Prepare daily directory
+        daily_dir = data_dir / "raw" / "2026" / "sep" / "daily"
+        mobile_dir = daily_dir / "mobile"
+        mobile_dir.mkdir(parents=True, exist_ok=True)
 
+        pc_file = daily_dir / "2026-09-29.jsonl"
+        mob_file = mobile_dir / "2026-09-29.jsonl"
+
+        pc_event = make_browser_event(ts(10, 0), ts(10, 15), "github.com", "GitHub", event_id="pc-1")
+        mob_event = {
+            "id": "mob-1",
+            "start": ts(10, 5),
+            "end": ts(10, 10),
+            "duration_seconds": 300.0,
+            "source": "mobile",
+            "context": {"app": "WhatsApp", "package": "com.whatsapp"}
+        }
+
+        with open(pc_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps(pc_event) + "\n")
+
+        with open(mob_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps(mob_event) + "\n")
+
+        events = read_day_events(str(data_dir), "2026-09-29")
+        assert len(events) == 2
+        sources = {e["source"] for e in events}
+        assert sources == {"browser", "mobile"}
+
+
+class TestPhase3DesktopWatcherMasterTimeline:
+    def test_alt_tab_away_from_chrome_with_extension_reporting(self):
+        """Alt-Tab away from Chrome clips extension event to Chrome foreground; Discord gets remaining time."""
+        from tests.conftest import make_browser_event, make_desktop_event
+
+        events = [
+            # Watcher says Chrome foreground 10:00 to 10:05
+            make_desktop_event(ts(10, 0), ts(10, 5), "Google Chrome", "GitHub - PR #42"),
+            # User Alt-Tabs to Discord 10:05 to 10:10
+            make_desktop_event(ts(10, 5), ts(10, 10), "Discord", "Discord | #dev"),
+            # Browser extension lagged / kept reporting 10:00 to 10:10
+            make_browser_event(ts(10, 0), ts(10, 10), "github.com", "GitHub - PR #42"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["total_active_seconds"] == 600.0
+        assert report["summary"]["pc_active_seconds"] == 600.0
+        assert report["summary"]["browser_seconds"] == 300.0
+        assert report["summary"]["desktop_seconds"] == 300.0
+
+        # Timeline has 2 sessions: Chrome then Discord
+        assert len(report["timeline"]) == 2
+        assert report["timeline"][0]["source"] == "browser"
+        assert report["timeline"][0]["duration_seconds"] == 300.0
+        assert report["timeline"][1]["source"] == "desktop"
+        assert report["timeline"][1]["duration_seconds"] == 300.0
+
+    def test_idle_clipping(self):
+        """Idle periods recorded by desktop watcher clip foreground browser extension time."""
+        from tests.conftest import make_browser_event, make_desktop_event
+
+        events = [
+            # Chrome foreground 10:00 to 10:05
+            make_desktop_event(ts(10, 0), ts(10, 5), "Google Chrome", "Python Docs"),
+            # Idle event 10:05 to 10:10
+            {
+                "id": "idle-1",
+                "start": ts(10, 5),
+                "end": ts(10, 10),
+                "duration_seconds": 300.0,
+                "source": "desktop",
+                "context": {"status": "idle", "app": "Idle"}
+            },
+            # Browser extension reported 10:00 to 10:10
+            make_browser_event(ts(10, 0), ts(10, 10), "docs.python.org", "Python Docs"),
+        ]
+
+        report = aggregate_events(events)
+
+        # Active time is only 300s (idle is not active screen time)
+        assert report["summary"]["total_active_seconds"] == 300.0
+        assert report["summary"]["pc_active_seconds"] == 300.0
+        assert report["summary"]["browser_seconds"] == 300.0
+        assert len(report["timeline"]) == 1
+        assert report["timeline"][0]["duration_seconds"] == 300.0
+
+    def test_watcher_offline_fallback(self):
+        """When watcher was offline, extension events fall back unclipped and are flagged in data_quality."""
+        from tests.conftest import make_browser_event
+
+        events = [
+            # No desktop events at all (watcher offline)
+            make_browser_event(ts(14, 10), ts(14, 30), "github.com", "GitHub", event_id="b-1"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["total_active_seconds"] == 1200.0
+        assert report["summary"]["browser_seconds"] == 1200.0
+        assert len(report["data_quality"]["fallback_ranges"]) > 0
+        fb = report["data_quality"]["fallback_ranges"][0]
+        assert fb["duration_seconds"] == 1200.0
+
+    def test_two_browser_profiles_overlap_resolution(self):
+        """Two browser profiles overlapping are resolved chronologically by watcher foreground without double counting."""
+        from tests.conftest import make_desktop_event
+
+        events = [
+            # Watcher: Chrome foreground 10:00 to 10:10 (600s)
+            make_desktop_event(ts(10, 0), ts(10, 10), "Google Chrome", "Chrome Window"),
+            # Profile 1 (Work): 10:00 to 10:06 (github.com)
+            {
+                "id": "p1-1",
+                "start": ts(10, 0),
+                "end": ts(10, 6),
+                "duration_seconds": 360.0,
+                "source": "browser",
+                "context": {"browser": "chrome", "domain": "github.com", "title": "GitHub"}
+            },
+            # Profile 2 (Personal): 10:04 to 10:10 (youtube.com)
+            {
+                "id": "p2-1",
+                "start": ts(10, 4),
+                "end": ts(10, 10),
+                "duration_seconds": 360.0,
+                "source": "browser",
+                "context": {"browser": "chrome", "domain": "youtube.com", "title": "YouTube"}
+            },
+        ]
+
+        report = aggregate_events(events)
+
+        # Non-overlapping PC timeline: 10:00-10:04 (Profile 1, 240s) + 10:04-10:10 (Profile 2, 360s) = 600s
+        assert report["summary"]["total_active_seconds"] == 600.0
+        assert report["summary"]["pc_active_seconds"] == 600.0
+        assert report["summary"]["browser_seconds"] == 600.0
+
+        domains = {d["domain"]: d["duration_seconds"] for d in report["domains"]}
+        assert domains["github.com"] == 240.0
+        assert domains["youtube.com"] == 360.0
+
+    def test_leftover_unknown_page_time(self):
+        """Leftover foreground time with no matching extension event becomes unknown page / no workspace."""
+        from tests.conftest import make_desktop_event, make_browser_event
+
+        events = [
+            # Chrome foreground 10:00 to 10:10 (600s)
+            make_desktop_event(ts(10, 0), ts(10, 10), "Google Chrome", "Chrome"),
+            # Extension event only 10:02 to 10:07 (300s)
+            make_browser_event(ts(10, 2), ts(10, 7), "github.com", "GitHub"),
+            # VS Code foreground 10:10 to 10:20 (600s) with no VS Code extension events
+            make_desktop_event(ts(10, 10), ts(10, 20), "Code", "Visual Studio Code"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["total_active_seconds"] == 1200.0
+        assert report["summary"]["browser_seconds"] == 600.0
+        assert report["summary"]["vscode_seconds"] == 600.0
+
+        titles = {t["title"]: t["duration_seconds"] for t in report["titles"]}
+        assert "Chrome (unknown page)" in titles
+        # 10:00-10:02 (120s) + 10:07-10:10 (180s) = 300s
+        assert titles["Chrome (unknown page)"] == 300.0
+        assert titles["GitHub"] == 300.0
+
+        workspaces = {w["workspace"]: w["duration_seconds"] for w in report["workspaces"]}
+        assert "VS Code (no workspace)" in workspaces
+        assert workspaces["VS Code (no workspace)"] == 600.0
+
+    def test_no_double_counting_across_pc_sources(self):
+        """Simultaneous browser and VS Code extension events are gated by watcher foreground; no double counting."""
+        from tests.conftest import make_desktop_event, make_browser_event, make_vscode_event
+
+        events = [
+            # Watcher says Chrome 10:00 to 10:05, Code 10:05 to 10:10
+            make_desktop_event(ts(10, 0), ts(10, 5), "Google Chrome", "Chrome"),
+            make_desktop_event(ts(10, 5), ts(10, 10), "Code", "VS Code"),
+            # Both extensions reported the entire 10:00 to 10:10 span
+            make_browser_event(ts(10, 0), ts(10, 10), "github.com", "GitHub"),
+            make_vscode_event(ts(10, 0), ts(10, 10), "repo", "main.py", "python"),
+        ]
+
+        report = aggregate_events(events)
+
+        # Exactly 600s total, 300s browser, 300s vscode
+        assert report["summary"]["total_active_seconds"] == 600.0
+        assert report["summary"]["pc_active_seconds"] == 600.0
+        assert report["summary"]["browser_seconds"] == 300.0
+        assert report["summary"]["vscode_seconds"] == 300.0
+
+    def test_desktop_session_keys_on_app_name_only_and_keeps_longest_held_title(self):
+        """Desktop sessions key on app name only and preserve longest-held title despite unread count changes."""
+        from tests.conftest import make_desktop_event
+
+        events = [
+            make_desktop_event(ts(10, 0), ts(10, 5), "Discord", "Discord | #general"),     # 300s
+            make_desktop_event(ts(10, 5), ts(10, 6), "Discord", "Discord | (1) #general"), # 60s
+            make_desktop_event(ts(10, 6), ts(10, 10), "Discord", "Discord | #general"),    # 240s
+        ]
+
+        report = aggregate_events(events)
+
+        # Merges into 1 session because context key is ("desktop", "Discord")
+        assert report["summary"]["session_count"] == 1
+        assert report["summary"]["desktop_seconds"] == 600.0
+        assert report["timeline"][0]["context"]["title"] == "Discord | #general"
+
+    def test_mobile_overlaps_pc_timeline_with_pc_only_total(self):
+        """Mobile is a separate lane overlapping PC timeline; pc_active_seconds and total_active_seconds match union."""
+        from tests.conftest import make_desktop_event, make_mobile_event
+
+        events = [
+            # PC active 10:00 to 11:00 (3600s)
+            make_desktop_event(ts(10, 0), ts(11, 0), "Antigravity", "IDE"),
+            # Mobile active 10:30 to 11:30 (3600s)
+            make_mobile_event(ts(10, 30), ts(11, 30), "YouTube", "com.google.android.youtube"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["pc_active_seconds"] == 3600.0
+        assert report["summary"]["desktop_seconds"] == 3600.0
+        assert report["summary"]["mobile_seconds"] == 3600.0
+        # Union covers 10:00 to 11:30 = 5400s
+        assert report["summary"]["screen_seconds"] == 5400.0
+        assert report["summary"]["total_active_seconds"] == 5400.0
+
+
+# =============================================================================
+# Phase 5 Tests: Report Cleanup, Hourly Interval Union, Storage FIFO, Phone IP
+# =============================================================================
+class TestPhase5ReportCleanupAndStorage:
+    def test_storage_recent_ids_ordered_fifo(self, tmp_data_dir):
+        """Storage _recent_ids uses an OrderedDict that preserves true FIFO order and evicts oldest."""
+        import collector.storage as storage
+        from collector.config import Config
+
+        cfg = Config(data_directory=str(tmp_data_dir), raw_min_duration_seconds=2.0)
+
+        # Clear existing state
+        storage._recent_ids.clear()
+
+        # Add 3 events
+        e1 = {"id": "evt-1", "start": "2026-09-29T10:00:00+05:30", "duration_seconds": 10.0, "source": "desktop", "context": {}}
+        e2 = {"id": "evt-2", "start": "2026-09-29T10:00:10+05:30", "duration_seconds": 10.0, "source": "desktop", "context": {}}
+        e3 = {"id": "evt-3", "start": "2026-09-29T10:00:20+05:30", "duration_seconds": 10.0, "source": "desktop", "context": {}}
+
+        assert storage.append_event(cfg, e1) is True
+        assert storage.append_event(cfg, e2) is True
+        assert storage.append_event(cfg, e3) is True
+
+        # Duplicate ID should be rejected
+        assert storage.append_event(cfg, e1) is False
+
+        # Verify OrderedDict keys preserve insertion order
+        keys = list(storage._recent_ids.keys())
+        assert keys == ["evt-1", "evt-2", "evt-3"]
+
+        # Simulate popitem eviction
+        storage._recent_ids.popitem(last=False)
+        assert "evt-1" not in storage._recent_ids
+        assert "evt-2" in storage._recent_ids
+        assert "evt-3" in storage._recent_ids
+
+    def test_android_collector_requires_configured_phone_ip(self, monkeypatch):
+        """sync_mobile_activity raises ValueError if device_ip / phone_ip is not configured."""
+        from collector.android_collector import sync_mobile_activity
+
+        monkeypatch.setattr("collector.android_collector.get_config", lambda: {"android": {}})
+        monkeypatch.setattr("collector.android_collector.find_adb_executable", lambda: "fake_adb")
+
+        import pytest
+        with pytest.raises(ValueError, match="Android phone IP is not configured"):
+            sync_mobile_activity(device_ip=None)
+
+    def test_hourly_manual_seconds_union(self):
+        """Overlapping manual events in an hour should have hourly manual_seconds
+        computed by interval union, not sum."""
+        events = [
+            # Manual event 1: 14:00 to 14:30 (30 min = 1800s)
+            {
+                "id": "man-1",
+                "start": ts(14, 0),
+                "end": ts(14, 30),
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Reading", "category": "offline_study"}
+            },
+            # Manual event 2: 14:15 to 14:45 (30 min = 1800s)
+            {
+                "id": "man-2",
+                "start": ts(14, 15),
+                "end": ts(14, 45),
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Notes", "category": "offline_study"}
+            },
+        ]
+        report = aggregate_events(events)
+        hourly = {h["hour"]: h for h in report["hourly_breakdown"]}
+        assert 14 in hourly
+        # Union of [14:00, 14:30] and [14:15, 14:45] is [14:00, 14:45] = 45 min = 2700s
+        assert hourly[14]["manual_seconds"] == 2700.0
+
+    def test_data_quality_block_contents(self, tmp_data_dir):
+        """data_quality contains sources_present, last_mobile_sync, fallback_ranges, watcher_offline_ranges, collector_offline_ranges."""
+        from tests.conftest import make_desktop_event, make_mobile_event
+
+        events = [
+            make_desktop_event(ts(10, 0), ts(10, 10), "Antigravity", "IDE"),
+            make_mobile_event(ts(12, 0), ts(12, 10), "WhatsApp", "com.whatsapp"),
+        ]
+
+        report = aggregate_events(events, data_directory=str(tmp_data_dir))
+        dq = report["data_quality"]
+
+        assert set(dq["sources_present"]) == {"desktop", "mobile"}
+        assert "last_mobile_sync" in dq
+        assert "watcher_offline_ranges" in dq
+        assert "collector_offline_ranges" in dq
+        assert "fallback_ranges" in dq
+        assert isinstance(dq["collector_offline_ranges"], list)
+        assert "context_switches" not in report["summary"]
+
+
+# =============================================================================
+# Phase 6 Tests: Shared-Secret Token Authentication & Restricted CORS
+# =============================================================================
+class TestPhase6SharedSecretAuthAndRestrictedCors:
+    def test_restricted_cors_origins(self):
+        """CORS allows known extension/webview/localhost origins and blocks unauthorized origins."""
+        from collector.main import cors_headers
+        from unittest.mock import Mock
+
+        # Known browser extension origin
+        req_chrome = Mock()
+        req_chrome.headers = {"Origin": "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn"}
+        h_chrome = cors_headers(req_chrome)
+        assert h_chrome.get("Access-Control-Allow-Origin") == "chrome-extension://nkbihfbeogaeaoehlefnkodbefgpgknn"
+
+        # Known VS Code webview origin
+        req_vscode = Mock()
+        req_vscode.headers = {"Origin": "vscode-webview://12345"}
+        h_vscode = cors_headers(req_vscode)
+        assert h_vscode.get("Access-Control-Allow-Origin") == "vscode-webview://12345"
+
+        # Localhost origin
+        req_local = Mock()
+        req_local.headers = {"Origin": "http://localhost:3000"}
+        h_local = cors_headers(req_local)
+        assert h_local.get("Access-Control-Allow-Origin") == "http://localhost:3000"
+
+        # Malicious / unauthorized external origin
+        req_evil = Mock()
+        req_evil.headers = {"Origin": "https://malicious-site.example.com"}
+        h_evil = cors_headers(req_evil)
+        assert "Access-Control-Allow-Origin" not in h_evil
+
+    def test_auth_token_enforcement(self, monkeypatch):
+        """When auth_token is configured, requests without it or with wrong token are rejected with 401."""
+        import asyncio
+        import collector.main as main_mod
+        from aiohttp import web
+        from unittest.mock import Mock
+
+        async def _test():
+            monkeypatch.setattr(main_mod.config, "auth_token", "super-secret-token-123")
+
+            handler_called = False
+            async def dummy_handler(req):
+                nonlocal handler_called
+                handler_called = True
+                return web.json_response({"status": "ok"})
+
+            # 1. Request without token -> 401
+            req_no_auth = Mock(spec=web.Request)
+            req_no_auth.method = "POST"
+            req_no_auth.path = "/event"
+            req_no_auth.headers = {}
+            req_no_auth.query = {}
+
+            resp1 = await main_mod.auth_and_cors_middleware(req_no_auth, dummy_handler)
+            assert resp1.status == 401
+            assert not handler_called
+
+            # 2. Request with invalid token -> 401
+            req_bad_auth = Mock(spec=web.Request)
+            req_bad_auth.method = "POST"
+            req_bad_auth.path = "/event"
+            req_bad_auth.headers = {"Authorization": "Bearer wrong-token"}
+            req_bad_auth.query = {}
+
+            resp2 = await main_mod.auth_and_cors_middleware(req_bad_auth, dummy_handler)
+            assert resp2.status == 401
+            assert not handler_called
+
+            # 3. Request with valid Authorization: Bearer -> 200
+            req_valid_bearer = Mock(spec=web.Request)
+            req_valid_bearer.method = "POST"
+            req_valid_bearer.path = "/event"
+            req_valid_bearer.headers = {"Authorization": "Bearer super-secret-token-123"}
+            req_valid_bearer.query = {}
+
+            resp3 = await main_mod.auth_and_cors_middleware(req_valid_bearer, dummy_handler)
+            assert resp3.status == 200
+            assert handler_called
+
+            # 4. Request with valid X-Auth-Token header -> 200
+            handler_called = False
+            req_valid_x_auth = Mock(spec=web.Request)
+            req_valid_x_auth.method = "POST"
+            req_valid_x_auth.path = "/event"
+            req_valid_x_auth.headers = {"X-Auth-Token": "super-secret-token-123"}
+            req_valid_x_auth.query = {}
+
+            resp4 = await main_mod.auth_and_cors_middleware(req_valid_x_auth, dummy_handler)
+            assert resp4.status == 200
+            assert handler_called
+
+            # 5. Public health check does not require token -> 200
+            handler_called = False
+            req_health = Mock(spec=web.Request)
+            req_health.method = "GET"
+            req_health.path = "/health"
+            req_health.headers = {}
+            req_health.query = {}
+
+            resp5 = await main_mod.auth_and_cors_middleware(req_health, dummy_handler)
+            assert resp5.status == 200
+            assert handler_called
+
+        asyncio.run(_test())
 

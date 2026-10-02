@@ -151,8 +151,8 @@ def _format_context_brief(source: str, ctx: Dict[str, Any]) -> str:
         title = ctx.get("title") or ctx.get("domain") or "Web browsing"
         return f"Browser: {title[:32]}"
     elif source == "vscode":
-        file = ctx.get("file") or ctx.get("workspace") or "Code editor"
-        return f"VS Code: {file[:32]}"
+        ws = ctx.get("workspace") or "Code editor"
+        return f"VS Code: {ws[:32]}"
     elif source == "mobile":
         app = ctx.get("app") or ctx.get("package") or "Mobile phone"
         return f"Mobile: {app[:32]}"

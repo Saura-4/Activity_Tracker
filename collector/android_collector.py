@@ -233,80 +233,99 @@ def parse_usagestats_events(
     dumpsys_text: str,
     device_tz: timezone,
     target_date: Optional[str] = None,
-    min_duration_seconds: float = 40.0,
-    ignored_packages: Optional[set] = None
+    min_duration_seconds: float = 2.0,
+    ignored_packages: Optional[set] = None,
+    now_dt: Optional[datetime] = None
 ) -> List[Dict[str, Any]]:
     """Parse discrete activity sessions from dumpsys usagestats event logs.
     
-    Reconstructs sessions bounded by ACTIVITY_RESUMED and ACTIVITY_PAUSED/STOPPED.
+    Reconstructs sessions bounded by ACTIVITY_RESUMED and ACTIVITY_PAUSED/STOPPED,
+    clamped by SCREEN_INTERACTIVE, SCREEN_NON_INTERACTIVE, and keyguard events.
     """
     if ignored_packages is None:
         ignored_packages = DEFAULT_IGNORED_PACKAGES
 
-    event_re = re.compile(r'time="([^"]+)"\s+type=([A-Z_]+)\s+package=([^\s]+)')
-    active_resumed = {}
-    sessions = []
+    if now_dt is None:
+        now_dt = datetime.now(device_tz)
+    elif now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=device_tz)
 
+    event_re = re.compile(r'time="([^"]+)"\s+type=([A-Z_]+)(?:\s+package=([^\s]+))?')
+    
+    raw_parsed_events = []
     for line in dumpsys_text.splitlines():
         m = event_re.search(line)
         if not m:
             continue
         ts_str, evt_type, pkg = m.group(1), m.group(2), m.group(3)
+        try:
+            dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=device_tz)
+            raw_parsed_events.append((dt, evt_type, pkg or ""))
+        except Exception:
+            continue
+
+    # Chronological sort
+    raw_parsed_events.sort(key=lambda x: x[0])
+
+    screen_off_events = []
+    screen_interactive = True
+    keyguard_shown = False
+    last_screen_off_dt = None
+
+    for dt, evt_type, pkg in raw_parsed_events:
+        if evt_type == "SCREEN_INTERACTIVE":
+            screen_interactive = True
+        elif evt_type == "SCREEN_NON_INTERACTIVE":
+            screen_interactive = False
+            screen_off_events.append(dt)
+            last_screen_off_dt = dt
+        elif evt_type == "KEYGUARD_SHOWN":
+            keyguard_shown = True
+            screen_off_events.append(dt)
+            last_screen_off_dt = dt
+        elif evt_type == "KEYGUARD_HIDDEN":
+            keyguard_shown = False
+
+    is_screen_currently_off = (not screen_interactive) or keyguard_shown
+
+    def clamp_session(s_dt: datetime, e_dt: datetime) -> Optional[datetime]:
+        if s_dt >= e_dt:
+            return None
+        # Clamp to earliest screen-off or keyguard event strictly after s_dt
+        for off_dt in screen_off_events:
+            if s_dt < off_dt < e_dt:
+                e_dt = off_dt
+                break
+        return e_dt if e_dt > s_dt else None
+
+    active_resumed = {}
+    sessions = []
+
+    for dt, evt_type, pkg in raw_parsed_events:
         if pkg in ignored_packages:
             continue
 
         if evt_type == "ACTIVITY_RESUMED":
-            active_resumed[pkg] = ts_str
+            active_resumed[pkg] = dt
         elif evt_type in ("ACTIVITY_PAUSED", "ACTIVITY_STOPPED") and pkg in active_resumed:
-            start_ts = active_resumed.pop(pkg)
-            end_ts = ts_str
-            try:
-                s_dt = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=device_tz)
-                e_dt = datetime.strptime(end_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=device_tz)
-                dur = round((e_dt - s_dt).total_seconds(), 1)
-                
-                # Check target date filter (in device's local calendar day)
-                event_date = s_dt.strftime("%Y-%m-%d")
-                if target_date and event_date != target_date:
-                    continue
+            s_dt = active_resumed.pop(pkg)
+            e_dt = dt
 
-                if dur >= min_duration_seconds:
-                    # Clean ISO format with timezone
-                    s_iso = s_dt.isoformat()
-                    e_iso = e_dt.isoformat()
-                    clean_id_ts = s_iso.replace(":", "-").replace("+", "_")
-                    app_name = get_friendly_app_name(pkg)
-
-                    sessions.append({
-                        "id": f"mobile-{pkg}-{clean_id_ts}",
-                        "start": s_iso,
-                        "end": e_iso,
-                        "duration_seconds": dur,
-                        "source": "mobile",
-                        "context": {
-                            "app": app_name,
-                            "package": pkg
-                        }
-                    })
-            except Exception:
+            clamped_end = clamp_session(s_dt, e_dt)
+            if not clamped_end:
                 continue
 
-    # Reconstruct any currently active app session (app still open in foreground right now)
-    now_dt = datetime.now(device_tz)
-    for pkg, start_ts in active_resumed.items():
-        if pkg in ignored_packages:
-            continue
-        try:
-            s_dt = datetime.strptime(start_ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=device_tz)
-            dur = round((now_dt - s_dt).total_seconds(), 1)
+            dur = round((clamped_end - s_dt).total_seconds(), 1)
             event_date = s_dt.strftime("%Y-%m-%d")
             if target_date and event_date != target_date:
                 continue
+
             if dur >= min_duration_seconds:
                 s_iso = s_dt.isoformat()
-                e_iso = now_dt.isoformat()
+                e_iso = clamped_end.isoformat()
                 clean_id_ts = s_iso.replace(":", "-").replace("+", "_")
                 app_name = get_friendly_app_name(pkg)
+
                 sessions.append({
                     "id": f"mobile-{pkg}-{clean_id_ts}",
                     "start": s_iso,
@@ -318,8 +337,46 @@ def parse_usagestats_events(
                         "package": pkg
                     }
                 })
-        except Exception:
+
+    # Currently active open sessions
+    for pkg, s_dt in active_resumed.items():
+        if pkg in ignored_packages:
             continue
+
+        # An open session must never end at now if the screen is currently off
+        if is_screen_currently_off:
+            if last_screen_off_dt and last_screen_off_dt > s_dt:
+                clamped_end = last_screen_off_dt
+            else:
+                continue
+        else:
+            clamped_end = clamp_session(s_dt, now_dt)
+
+        if not clamped_end or clamped_end <= s_dt:
+            continue
+
+        dur = round((clamped_end - s_dt).total_seconds(), 1)
+        event_date = s_dt.strftime("%Y-%m-%d")
+        if target_date and event_date != target_date:
+            continue
+
+        if dur >= min_duration_seconds:
+            s_iso = s_dt.isoformat()
+            e_iso = clamped_end.isoformat()
+            clean_id_ts = s_iso.replace(":", "-").replace("+", "_")
+            app_name = get_friendly_app_name(pkg)
+
+            sessions.append({
+                "id": f"mobile-{pkg}-{clean_id_ts}",
+                "start": s_iso,
+                "end": e_iso,
+                "duration_seconds": dur,
+                "source": "mobile",
+                "context": {
+                    "app": app_name,
+                    "package": pkg
+                }
+            })
 
     return sessions
 
@@ -342,7 +399,9 @@ def sync_mobile_activity(
     # Check configuration for android settings
     android_cfg = cfg.get("android", {})
     if not device_ip:
-        device_ip = android_cfg.get("device_ip", "10.114.208.160")
+        device_ip = android_cfg.get("device_ip") or android_cfg.get("phone_ip")
+    if not device_ip:
+        raise ValueError("Android phone IP is not configured. Please set 'android.device_ip' or 'android.phone_ip' in config.json or pass via --ip.")
     port = android_cfg.get("port", port)
 
     # Locate target device
@@ -361,7 +420,7 @@ def sync_mobile_activity(
     d = datetime.strptime(target_date, "%Y-%m-%d")
     year = str(d.year)
     month = d.strftime("%b").lower()
-    raw_dir = Path(cfg["data_directory"]) / "raw" / year / month / "daily"
+    raw_dir = Path(cfg["data_directory"]) / "raw" / year / month / "daily" / "mobile"
     raw_dir.mkdir(parents=True, exist_ok=True)
     raw_file = raw_dir / f"{target_date}.jsonl"
 
@@ -370,7 +429,7 @@ def sync_mobile_activity(
 
     # Ignored packages configuration
     ignored = set(android_cfg.get("ignore_packages", list(DEFAULT_IGNORED_PACKAGES)))
-    effective_min_dur = min_duration_seconds if min_duration_seconds is not None else float(cfg.get("min_duration_seconds", 40.0))
+    effective_min_dur = min_duration_seconds if min_duration_seconds is not None else float(cfg.get("raw_min_duration_seconds", 2.0))
     sessions = parse_usagestats_events(output, dev_tz, target_date=target_date, min_duration_seconds=effective_min_dur, ignored_packages=ignored)
 
     if not sessions:

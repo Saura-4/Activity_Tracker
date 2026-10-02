@@ -1,7 +1,7 @@
 // Configuration defaults
 const DEFAULT_SETTINGS = {
   collectorUrl: 'http://127.0.0.1:8765',
-  minDuration: 40,
+  minDuration: 2,
   trackInternal: false,
   stripParams: true
 };
@@ -181,7 +181,7 @@ async function startSession(tab, windowId) {
 
 // End current session and queue event
 // Core improvement: caps session at lastHeartbeat if the gap is too large
-async function endCurrentSession() {
+async function endCurrentSession(explicitEndTime = null) {
   if (!currentSession) return;
 
   const now = Date.now();
@@ -189,17 +189,19 @@ async function endCurrentSession() {
   const lastHB = currentSession.lastHeartbeat || startTime;
 
   // Determine the true session end:
-  // If we haven't had a heartbeat recently, the user left long ago.
-  // Cap the end at lastHeartbeat (+ small buffer for the heartbeat interval itself).
   let effectiveEndMs;
-  const gapSinceHeartbeat = now - lastHB;
-
-  if (gapSinceHeartbeat > STALE_THRESHOLD_MS) {
-    // STALE: User was away (sleep, minimized, switched app without focus event).
-    // End the session at the last heartbeat + half the interval as grace.
-    effectiveEndMs = lastHB + Math.round(HEARTBEAT_INTERVAL_MS / 2);
+  if (explicitEndTime !== null && explicitEndTime !== undefined) {
+    effectiveEndMs = typeof explicitEndTime === 'number' ? explicitEndTime : new Date(explicitEndTime).getTime();
+    if (effectiveEndMs < startTime) {
+      effectiveEndMs = startTime;
+    }
   } else {
-    effectiveEndMs = now;
+    const gapSinceHeartbeat = now - lastHB;
+    if (gapSinceHeartbeat > STALE_THRESHOLD_MS) {
+      effectiveEndMs = lastHB + Math.round(HEARTBEAT_INTERVAL_MS / 2);
+    } else {
+      effectiveEndMs = now;
+    }
   }
 
   let durationSeconds = (effectiveEndMs - startTime) / 1000;
@@ -250,11 +252,15 @@ async function processQueue() {
   while (eventQueue.length > 0) {
     const event = eventQueue[0];
     try {
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      if (settings.authToken) {
+        headers['Authorization'] = `Bearer ${settings.authToken}`;
+      }
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: headers,
         body: JSON.stringify(event)
       });
 
@@ -380,7 +386,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.audible === false && currentSession && currentSession.tabId === tabId) {
     if (chrome.idle) {
       chrome.idle.queryState(300, async (idleState) => {
-        if (idleState === 'idle' || idleState === 'locked') {
+        if (idleState === 'idle') {
+          await endCurrentSession(Date.now() - 300_000);
+        } else if (idleState === 'locked') {
           await endCurrentSession();
         }
       });
@@ -449,7 +457,8 @@ if (chrome.idle) {
           }
         } catch (e) {}
       }
-      await endCurrentSession();
+      // When idle, end the session at now - 300s
+      await endCurrentSession(Date.now() - 300_000);
     } else if (newState === 'active') {
       // User resumed activity -> start tracking active tab if window focused
       try {

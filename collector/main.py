@@ -15,15 +15,76 @@ logger = logging.getLogger(__name__)
 
 config = get_config()
 
-def cors_headers():
-    return {
-        'Access-Control-Allow-Origin': '*',
+import fnmatch
+
+def cors_headers(request=None):
+    allowed_patterns = getattr(config, "cors_origins", None) or [
+        "chrome-extension://*",
+        "moz-extension://*",
+        "vscode-webview://*",
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "null"
+    ]
+    origin = request.headers.get("Origin", "") if request else ""
+    matched_origin = None
+    if origin:
+        for pat in allowed_patterns:
+            if fnmatch.fnmatch(origin, pat):
+                matched_origin = origin
+                break
+
+    h = {
         'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Auth-Token'
     }
+    if matched_origin:
+        h['Access-Control-Allow-Origin'] = matched_origin
+    return h
+
+@web.middleware
+async def auth_and_cors_middleware(request, handler):
+    # Handle preflight OPTIONS
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=cors_headers(request))
+
+    # Health check is public
+    if request.path == "/health":
+        resp = await handler(request)
+        for k, v in cors_headers(request).items():
+            if k not in resp.headers:
+                resp.headers[k] = v
+        return resp
+
+    # Validate auth token if configured
+    auth_token = getattr(config, "auth_token", None)
+    if auth_token:
+        req_token = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            req_token = auth_header[7:].strip()
+        elif auth_header:
+            req_token = auth_header.strip()
+        if not req_token:
+            req_token = request.headers.get("X-Auth-Token", "")
+        if not req_token:
+            req_token = request.query.get("token", "")
+
+        if req_token != auth_token:
+            return web.json_response(
+                {"status": "error", "message": "Unauthorized"},
+                status=401,
+                headers=cors_headers(request)
+            )
+
+    resp = await handler(request)
+    for k, v in cors_headers(request).items():
+        if k not in resp.headers:
+            resp.headers[k] = v
+    return resp
 
 async def handle_options(request):
-    return web.Response(headers=cors_headers())
+    return web.Response(status=204, headers=cors_headers(request))
 
 async def handle_health(request):
     return web.json_response({"status": "ok"}, headers=cors_headers())
@@ -33,9 +94,9 @@ async def handle_config(request):
 
 async def process_single_event(data):
     event = validate_and_create_event(data, config.strip_query_strings)
-    min_dur = getattr(config, "min_duration_seconds", 40.0)
-    if event.duration_seconds < min_dur:
-        logger.debug(f"Event dropped (duration {event.duration_seconds}s < {min_dur}s): {event.source}")
+    raw_min_dur = getattr(config, "raw_min_duration_seconds", 2.0)
+    if event.duration_seconds < raw_min_dur:
+        logger.debug(f"Event dropped (duration {event.duration_seconds}s < {raw_min_dur}s): {event.source}")
         return {"status": "ignored", "reason": "duration_below_threshold", "id": event.id}
 
     evt_dict = dataclasses.asdict(event)
@@ -248,7 +309,7 @@ async def handle_root(request):
         "endpoints": ["GET /health", "GET /config", "POST /event", "POST /events", "POST /api/sync-mobile", "POST /api/generate-report", "POST /api/manual", "GET /api/manual"]
     }, headers=cors_headers())
 
-app = web.Application()
+app = web.Application(middlewares=[auth_and_cors_middleware])
 app.router.add_get('/', handle_root)
 app.router.add_route('OPTIONS', '/{tail:.*}', handle_options)
 app.router.add_get('/health', handle_health)
@@ -259,6 +320,24 @@ app.router.add_post('/api/sync-mobile', handle_sync_mobile)
 app.router.add_post('/api/generate-report', handle_generate_report)
 app.router.add_post('/api/manual', handle_manual_event)
 app.router.add_get('/api/manual', handle_get_manual)
+
+def start_periodic_mobile_sync(interval_seconds: float = 1800.0):
+    import threading
+    import time
+    def _sync_worker():
+        logger.info(f"Periodic mobile sync worker started (every {interval_seconds}s)")
+        while True:
+            time.sleep(interval_seconds)
+            try:
+                from collector.android_collector import sync_mobile_activity
+                logger.info("Executing scheduled periodic mobile sync...")
+                res = sync_mobile_activity()
+                logger.info(f"Periodic mobile sync complete: {res.get('total_sessions', 0)} sessions")
+            except Exception as e:
+                logger.debug(f"Periodic mobile sync skipped/failed: {e}")
+
+    sync_thread = threading.Thread(target=_sync_worker, daemon=True, name="PeriodicMobileSync")
+    sync_thread.start()
 
 def main():
     logger.info(f"Starting collector on {config.collector_host}:{config.collector_port}")
@@ -278,6 +357,15 @@ def main():
             logger.info("Desktop application watcher thread started")
         except Exception as e:
             logger.warning(f"Could not start desktop watcher: {e}")
+
+    # Start periodic mobile sync background thread if enabled
+    android_cfg = getattr(config, "android", {}) or {}
+    if android_cfg.get("enabled", True):
+        try:
+            interval = float(android_cfg.get("sync_interval_seconds", 1800.0))
+            start_periodic_mobile_sync(interval_seconds=interval)
+        except Exception as e:
+            logger.warning(f"Could not start periodic mobile sync: {e}")
 
     try:
         web.run_app(app, host=config.collector_host, port=config.collector_port)

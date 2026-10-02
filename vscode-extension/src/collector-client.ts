@@ -10,8 +10,6 @@ export interface ActivityEvent {
     source: 'vscode';
     context: {
         workspace: string;   // workspace/folder name
-        file: string;        // relative file path within workspace
-        language: string;    // language ID (python, typescript, etc.)
     };
 }
 
@@ -34,18 +32,24 @@ export class CollectorClient {
     public async sendEvent(event: ActivityEvent): Promise<boolean> {
         const config = vscode.workspace.getConfiguration('activityTracker');
         const urlString = config.get<string>('collectorUrl') || 'http://127.0.0.1:8765';
+        const authToken = config.get<string>('authToken') || '';
         
         try {
             const url = new URL(urlString + '/event');
             const data = JSON.stringify(event);
 
+            const headers: Record<string, string | number> = {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+            };
+            if (authToken) {
+                headers['Authorization'] = `Bearer ${authToken}`;
+            }
+
             return new Promise((resolve) => {
                 const req = http.request(url, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Content-Length': Buffer.byteLength(data)
-                    }
+                    headers: headers
                 }, (res) => {
                     if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
                         this.eventsSentToday++;

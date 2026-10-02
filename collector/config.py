@@ -13,11 +13,23 @@ class Config:
     strip_query_strings: bool = True
     session_merge_gap_seconds: float = 30.0
     min_duration_seconds: float = 40.0
+    raw_min_duration_seconds: float = 2.0
     android: Dict[str, Any] = None
+    auth_token: Optional[str] = None
+    cors_origins: Optional[list] = None
 
     def __post_init__(self):
         if self.android is None:
             self.android = {}
+        if self.cors_origins is None:
+            self.cors_origins = [
+                "chrome-extension://*",
+                "moz-extension://*",
+                "vscode-webview://*",
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "null"
+            ]
 
     def __getitem__(self, item):
         return getattr(self, item)
@@ -65,8 +77,14 @@ def get_config() -> Config:
                         config.session_merge_gap_seconds = float(data["session_merge_gap_seconds"])
                     if "min_duration_seconds" in data:
                         config.min_duration_seconds = float(data["min_duration_seconds"])
+                    if "raw_min_duration_seconds" in data:
+                        config.raw_min_duration_seconds = float(data["raw_min_duration_seconds"])
                     if "android" in data:
                         config.android = data["android"]
+                    if "auth_token" in data:
+                        config.auth_token = data["auth_token"]
+                    if "cors_origins" in data:
+                        config.cors_origins = data["cors_origins"]
                 break
             except Exception as e:
                 print(f"Error loading config from {p}: {e}")

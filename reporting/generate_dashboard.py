@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 
+# Add parent directory to path so we can import collector modules
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from collector.config import get_config
+
 def format_duration(seconds: float) -> str:
     s = int(seconds)
     hours = s // 3600
@@ -33,6 +37,12 @@ def format_duration(seconds: float) -> str:
 def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, str], initial_date: str) -> str:
     reports_json = json.dumps(reports_data)
     analyses_json = json.dumps(analyses_data)
+    try:
+        cfg = get_config()
+        auth_token_str = getattr(cfg, "auth_token", "") or ""
+    except Exception:
+        auth_token_str = ""
+    auth_token_json = json.dumps(auth_token_str)
     
     # Pre-render markdown to HTML with tables enabled using markdown-it-py
     analyses_html_data = {}
@@ -429,7 +439,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       </section>
 
       <!-- KPI Metric Cards Grid -->
-      <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      <section class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
         <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition-all duration-200 hover:border-white/[0.18] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] relative group">
           <div class="flex items-center justify-between">
             <span class="text-[11px] font-medium uppercase tracking-wider text-slate-400">Active Screen Time</span>
@@ -439,28 +449,6 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           </div>
           <div id="metric-total-active" class="text-2xl font-bold text-white mt-1.5 font-mono tracking-tight">--</div>
           <div id="metric-observed-span" class="text-xs text-slate-400 mt-1">Observed span: --</div>
-        </div>
-
-        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition-all duration-200 hover:border-white/[0.18] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] relative group">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] font-medium uppercase tracking-wider text-slate-400">Deep Focus Time</span>
-            <div class="w-6 h-6 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-slate-400 group-hover:text-slate-200 transition">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
-            </div>
-          </div>
-          <div id="metric-work-time" class="text-2xl font-bold text-white mt-1.5 font-mono tracking-tight">--</div>
-          <div id="metric-work-pct" class="text-xs text-slate-400 mt-1">Coding & AI research</div>
-        </div>
-
-        <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition-all duration-200 hover:border-white/[0.18] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] relative group">
-          <div class="flex items-center justify-between">
-            <span class="text-[11px] font-medium uppercase tracking-wider text-slate-400">Context Switches</span>
-            <div class="w-6 h-6 rounded bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-slate-400 group-hover:text-slate-200 transition">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-            </div>
-          </div>
-          <div id="metric-switches" class="text-2xl font-bold text-white mt-1.5 font-mono tracking-tight">--</div>
-          <div id="metric-switch-rate" class="text-xs text-slate-400 mt-1">Across apps & windows</div>
         </div>
 
         <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 transition-all duration-200 hover:border-white/[0.18] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] relative group">
@@ -904,6 +892,17 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
     const REPORTS_DATABASE = {reports_json};
     const ANALYSES_DATABASE = {analyses_json};
     const ANALYSES_HTML_DATABASE = {analyses_html_json};
+    const COLLECTOR_AUTH_TOKEN = {auth_token_json};
+
+    function getCollectorHeaders() {{
+      const headers = {{ "Content-Type": "application/json" }};
+      const token = localStorage.getItem("activity_tracker_token") || COLLECTOR_AUTH_TOKEN || "";
+      if (token) {{
+        headers["Authorization"] = "Bearer " + token;
+      }}
+      return headers;
+    }}
+
     let currentDate = "{initial_date}";
     let currentFilter = "all";
     let searchQuery = "";
@@ -1591,33 +1590,6 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         `<span>Observed: <strong class="text-neutral-200">${{spanFormatted}}</strong> (${{pctActive}}% active)</span>` : 
         `<span>No active session data</span>`;
 
-      // Deep Work Estimate (ChatGPT, GitHub, LeetCode, Antigravity, VS Code)
-      let workSec = (sources.vscode?.duration_seconds || 0);
-      if (rep.domains) {{
-        rep.domains.forEach(d => {{
-          const dm = d.domain.toLowerCase();
-          if (dm.includes("chatgpt") || dm.includes("github") || dm.includes("leetcode") || dm.includes("openai") || dm.includes("neopat")) {{
-            workSec += d.duration_seconds;
-          }}
-        }});
-      }}
-      if (rep.desktop_apps) {{
-        rep.desktop_apps.forEach(a => {{
-          const ap = a.app.toLowerCase();
-          if (ap.includes("antigravity") || ap.includes("terminal") || ap.includes("code")) {{
-            workSec += a.duration_seconds;
-          }}
-        }});
-      }}
-      document.getElementById("metric-work-time").textContent = workSec > 0 ? formatSecs(workSec) : "--";
-      const workPct = totalSec > 0 ? Math.round((workSec / totalSec) * 100) : 0;
-      document.getElementById("metric-work-pct").textContent = `${{workPct}}% of total active time`;
-
-      // Switches
-      const switches = sum.context_switches || 0;
-      document.getElementById("metric-switches").textContent = switches;
-      const switchRate = spanSec > 3600 ? (switches / (spanSec / 3600)).toFixed(1) : switches;
-      document.getElementById("metric-switch-rate").textContent = `~${{switchRate}} context switches/hr`;
 
       // Longest session
       // Longest session (screen activity only)
@@ -1964,7 +1936,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
       try {{
         const resp = await fetch("http://127.0.0.1:8765/api/manual", {{
           method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
+          headers: getCollectorHeaders(),
           body: JSON.stringify({{
             date: dateVal,
             start: startVal,
@@ -2116,10 +2088,9 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
             subtitle = (ctx.title && ctx.title !== ctx.app) ? ctx.title : "";
           }} else if (src === "mobile") {{
             title = ctx.app || ctx.package || "Mobile App";
-            subtitle = ctx.package || "";
           }} else if (src === "vscode") {{
-            title = ctx.file || ctx.workspace || "VS Code";
-            subtitle = (ctx.workspace ? ctx.workspace + " " : "") + (ctx.language ? "(" + ctx.language + ")" : "");
+            title = ctx.workspace || "VS Code";
+            subtitle = "";
           }} else {{
             title = src;
           }}
@@ -2840,8 +2811,8 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
           title = ctx.app || ctx.package || "Mobile App";
           subtitle = ctx.package || "";
         }} else if (item.source === "vscode") {{
-          title = ctx.file || ctx.workspace || "VS Code";
-          subtitle = ctx.workspace || "";
+          title = ctx.workspace || "VS Code";
+          subtitle = "";
         }} else if (item.source === "manual") {{
           title = ctx.activity || ctx.title || "Offline Activity";
           subtitle = ctx.category ? ctx.category.toUpperCase() : "Offline";
@@ -3512,7 +3483,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         row.className = "p-3 sm:px-4 hover:bg-white/[0.02] transition flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs border-b border-white/[0.04] last:border-0";
 
         const title = item.context?.activity || item.context?.title || item.context?.app || item.context?.domain || item.source;
-        const sub = item.context?.category || item.context?.domain || item.context?.package || item.context?.file || item.context?.workspace || "";
+        const sub = item.context?.category || item.context?.domain || item.context?.package || item.context?.workspace || "";
 
         let sourceBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-[#38bdf8]/10 text-[#7dd3fc] border border-[#38bdf8]/20">Browser</span>`;
         if (item.source === "mobile") {{
@@ -3606,7 +3577,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         text.textContent = "Syncing ADB...";
         const resp = await fetch("http://127.0.0.1:8765/api/sync-mobile", {{
           method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
+          headers: getCollectorHeaders(),
           body: JSON.stringify({{ date: currentDate }})
         }});
         const res = await resp.json();
@@ -3639,7 +3610,7 @@ def build_dashboard_html(reports_data: Dict[str, Any], analyses_data: Dict[str, 
         text.textContent = "Generating...";
         const resp = await fetch("http://127.0.0.1:8765/api/generate-report", {{
           method: "POST",
-          headers: {{ "Content-Type": "application/json" }},
+          headers: getCollectorHeaders(),
           body: JSON.stringify({{ date: targetDate, today: localToday }})
         }});
         const res = await resp.json();

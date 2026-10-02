@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, Any, List, Optional
 
-DEFAULT_TZ = timezone(timedelta(hours=5, minutes=30))  # Local system default (+05:30)
+DEFAULT_TZ = datetime.now().astimezone().tzinfo or timezone.utc
 
 CATEGORY_KEYWORDS = {
     "rest": ["nap", "sleep", "rest", "lie down", "power nap", "doze", "resting"],

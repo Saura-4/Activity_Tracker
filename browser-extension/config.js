@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const form = document.getElementById('settingsForm');
   const urlInput = document.getElementById('collectorUrl');
+  const authTokenInput = document.getElementById('authToken');
   const minDurationInput = document.getElementById('minDuration');
   const trackInternalInput = document.getElementById('trackInternal');
   const stripParamsInput = document.getElementById('stripParams');
@@ -14,12 +15,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const data = await chrome.storage.local.get(['settings']);
   const settings = data.settings || {
     collectorUrl: 'http://127.0.0.1:8765',
-    minDuration: 40,
+    authToken: '',
+    minDuration: 2,
     trackInternal: false,
     stripParams: true
   };
 
   urlInput.value = settings.collectorUrl;
+  authTokenInput.value = settings.authToken || '';
   minDurationInput.value = settings.minDuration;
   trackInternalInput.checked = settings.trackInternal;
   stripParamsInput.checked = settings.stripParams;
@@ -33,6 +36,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     const newSettings = {
       collectorUrl: urlInput.value.replace(/\/$/, ''), // Remove trailing slash
+      authToken: authTokenInput.value.trim(),
       minDuration: parseFloat(minDurationInput.value),
       trackInternal: trackInternalInput.checked,
       stripParams: stripParamsInput.checked

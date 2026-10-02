@@ -35,6 +35,10 @@ class LASTINPUTINFO(ctypes.Structure):
 
 # Friendly app name mapping (lowercase process name -> display name)
 KNOWN_APPS = {
+    "chrome.exe": "Google Chrome",
+    "brave.exe": "Brave Browser",
+    "msedge.exe": "Microsoft Edge",
+    "code.exe": "Code",
     "antigravity.exe": "Antigravity",
     "vlc.exe": "VLC Media Player",
     "mpv.exe": "MPV",
@@ -61,12 +65,8 @@ KNOWN_APPS = {
     "figma.exe": "Figma",
 }
 
-# Processes to ignore (already covered by extensions or OS background chrome)
+# Processes to ignore (OS background chrome)
 IGNORED_PROCESSES = {
-    "chrome.exe",
-    "brave.exe",
-    "msedge.exe",
-    "code.exe",
     "lockapp.exe",
     "searchhost.exe",
     "shellexperiencehost.exe",
@@ -166,16 +166,20 @@ def get_idle_seconds() -> float:
 
 def emit_desktop_event(event: Dict[str, Any], collector_url: str, data_directory: str):
     """Deliver desktop event to collector HTTP endpoint, or append to raw/desktop/ if offline."""
-    if float(event.get("duration_seconds", 0.0)) < 40.0:
+    if float(event.get("duration_seconds", 0.0)) < 2.0:
         return
 
     # Attempt HTTP delivery first (thread-safe centralized queue)
     delivered = False
     try:
+        headers = {"Content-Type": "application/json"}
+        token = getattr(get_config(), "auth_token", None)
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         req = urllib.request.Request(
             f"{collector_url}/event",
             data=json.dumps(event).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            headers=headers
         )
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             if resp.status == 200:
@@ -208,7 +212,7 @@ class DesktopWatcher:
         data_directory: str = "S:\\project\\AW\\Record",
         idle_threshold_seconds: float = 300.0,  # 5 minutes
         poll_interval: float = 1.0,
-        min_session_duration: float = 40.0
+        min_session_duration: float = 2.0
     ):
         self.collector_url = collector_url
         self.data_directory = data_directory
@@ -217,8 +221,11 @@ class DesktopWatcher:
         self.min_session_duration = min_session_duration
 
         self.running = False
-        self.current_session = None  # {app, title, proc_name, start_time, start_dt, is_media}
+        self.current_session = None  # {app, title, proc_name, start_dt, key, title_durations, last_title, last_title_time}
         self.is_idle = False
+        self.idle_start_dt = None
+        self.is_locked = False
+        self.lock_start_dt = None
         self._last_tick_mono = None
 
     def start(self):
@@ -249,6 +256,16 @@ class DesktopWatcher:
         start_dt = self.current_session["start_dt"]
         duration = (now_dt - start_dt).total_seconds()
 
+        # Finalize title durations
+        now_mono = time.monotonic()
+        if "last_title" in self.current_session and "last_title_time" in self.current_session:
+            dt = max(0.0, now_mono - self.current_session["last_title_time"])
+            self.current_session["title_durations"][self.current_session["last_title"]] += dt
+
+        best_title = self.current_session.get("title", "")
+        if self.current_session.get("title_durations"):
+            best_title = max(self.current_session["title_durations"].items(), key=lambda x: x[1])[0]
+
         if duration >= self.min_session_duration:
             start_iso = start_dt.isoformat()
             end_iso = now_dt.isoformat()
@@ -263,7 +280,8 @@ class DesktopWatcher:
                 "source": "desktop",
                 "context": {
                     "app": self.current_session["app"],
-                    "title": self.current_session["title"]
+                    "title": best_title,
+                    "proc_name": self.current_session.get("proc_name", "")
                 }
             }
             emit_desktop_event(event, self.collector_url, self.data_directory)
@@ -271,13 +289,31 @@ class DesktopWatcher:
         self.current_session = None
 
     def _tick(self):
-        # OS Suspend / Sleep detection:
-        # If the gap between ticks exceeds 10s (poll_interval is 1s), the system was suspended/slept.
+        now_dt = datetime.now().astimezone()
         now_mono = time.monotonic()
+
+        # OS Suspend / Sleep detection:
         if self._last_tick_mono is not None and (now_mono - self._last_tick_mono) > 10.0:
+            sleep_gap = now_mono - self._last_tick_mono
+            sleep_start = now_dt - timedelta(seconds=sleep_gap)
             if self.current_session:
-                suspend_end_time = datetime.now().astimezone() - timedelta(seconds=(now_mono - self._last_tick_mono))
-                self._end_current_session(explicit_end_time=suspend_end_time)
+                self._end_current_session(explicit_end_time=sleep_start)
+            # Emit explicit non-foreground sleep event
+            s_iso = sleep_start.isoformat()
+            e_iso = now_dt.isoformat()
+            clean_ts = s_iso.replace(":", "-").replace("+", "_")
+            sleep_event = {
+                "id": f"desktop-sleep-{clean_ts}",
+                "start": s_iso,
+                "end": e_iso,
+                "duration_seconds": round(sleep_gap, 1),
+                "source": "desktop",
+                "context": {
+                    "status": "sleep",
+                    "app": "Sleep"
+                }
+            }
+            emit_desktop_event(sleep_event, self.collector_url, self.data_directory)
         self._last_tick_mono = now_mono
 
         idle_secs = get_idle_seconds()
@@ -287,7 +323,36 @@ class DesktopWatcher:
         if proc_name == "explorer.exe" and (not title or title in ("Program Manager", "Task Switching")):
             proc_name = None
 
-        # Check if current app is an ignored browser or VS Code (tracked by extensions)
+        # Lock screen detection
+        if proc_name == "lockapp.exe":
+            if self.current_session:
+                self._end_current_session()
+            if not self.is_locked:
+                self.is_locked = True
+                self.lock_start_dt = now_dt
+            return
+        elif self.is_locked:
+            self.is_locked = False
+            lock_end_dt = now_dt
+            lock_dur = (lock_end_dt - self.lock_start_dt).total_seconds()
+            if lock_dur >= self.min_session_duration:
+                s_iso = self.lock_start_dt.isoformat()
+                e_iso = lock_end_dt.isoformat()
+                clean_ts = s_iso.replace(":", "-").replace("+", "_")
+                lock_event = {
+                    "id": f"desktop-locked-{clean_ts}",
+                    "start": s_iso,
+                    "end": e_iso,
+                    "duration_seconds": round(lock_dur, 1),
+                    "source": "desktop",
+                    "context": {
+                        "status": "locked",
+                        "app": "Locked"
+                    }
+                }
+                emit_desktop_event(lock_event, self.collector_url, self.data_directory)
+
+        # Check if current app is an ignored OS chrome app
         is_ignored_app = bool(proc_name and proc_name in IGNORED_PROCESSES)
 
         # Media player hands-free watching exemption
@@ -298,53 +363,86 @@ class DesktopWatcher:
         # Check idle state
         if idle_secs >= self.idle_threshold_seconds and not is_media_active:
             if not self.is_idle:
-                # User went idle -> end session at the moment activity ceased
                 self.is_idle = True
-                idle_end_time = datetime.now().astimezone() - timedelta(seconds=idle_secs)
-                self._end_current_session(explicit_end_time=idle_end_time)
+                self.idle_start_dt = now_dt - timedelta(seconds=idle_secs)
+                self._end_current_session(explicit_end_time=self.idle_start_dt)
             return
 
-        # User is active
+        # User resumed from idle -> emit non-foreground idle event
         if self.is_idle:
             self.is_idle = False
+            if self.idle_start_dt:
+                idle_end_dt = now_dt
+                idle_dur = (idle_end_dt - self.idle_start_dt).total_seconds()
+                if idle_dur >= self.min_session_duration:
+                    s_iso = self.idle_start_dt.isoformat()
+                    e_iso = idle_end_dt.isoformat()
+                    clean_ts = s_iso.replace(":", "-").replace("+", "_")
+                    idle_event = {
+                        "id": f"desktop-idle-{clean_ts}",
+                        "start": s_iso,
+                        "end": e_iso,
+                        "duration_seconds": round(idle_dur, 1),
+                        "source": "desktop",
+                        "context": {
+                            "status": "idle",
+                            "app": "Idle"
+                        }
+                    }
+                    emit_desktop_event(idle_event, self.collector_url, self.data_directory)
+                self.idle_start_dt = None
 
-        # If user is in Chrome, Brave, or VS Code, let their extensions handle it
         if is_ignored_app or not proc_name:
             if self.current_session:
                 self._end_current_session()
             return
 
-        # Context key for desktop window
-        context_key = (app_name, title)
+        # Desktop sessions key on app name only, not app plus title.
+        context_key = app_name
 
         if not self.current_session:
-            # Start fresh desktop session
-            now_dt = datetime.now().astimezone()
+            title_durations = {title: 0.0}
             self.current_session = {
                 "app": app_name,
                 "title": title,
                 "proc_name": proc_name,
                 "start_dt": now_dt,
-                "key": context_key
+                "key": context_key,
+                "title_durations": title_durations,
+                "last_title": title,
+                "last_title_time": now_mono
             }
         elif self.current_session["key"] != context_key:
-            # Window switched or title significantly changed -> switch session
+            # Switched to different app
             self._end_current_session()
-            now_dt = datetime.now().astimezone()
+            title_durations = {title: 0.0}
             self.current_session = {
                 "app": app_name,
                 "title": title,
                 "proc_name": proc_name,
                 "start_dt": now_dt,
-                "key": context_key
+                "key": context_key,
+                "title_durations": title_durations,
+                "last_title": title,
+                "last_title_time": now_mono
             }
+        else:
+            # Same app: update title duration tracking if title changed
+            if title != self.current_session["last_title"]:
+                dt = max(0.0, now_mono - self.current_session["last_title_time"])
+                self.current_session["title_durations"][self.current_session["last_title"]] = (
+                    self.current_session["title_durations"].get(self.current_session["last_title"], 0.0) + dt
+                )
+                self.current_session["last_title"] = title
+                self.current_session["last_title_time"] = now_mono
+                self.current_session["title"] = title
 
 
 def run_standalone():
     cfg = get_config()
     collector_url = f"http://{cfg.collector_host}:{cfg.collector_port}"
     data_dir = cfg.data_directory
-    min_dur = getattr(cfg, "min_duration_seconds", 40.0)
+    min_dur = getattr(cfg, "raw_min_duration_seconds", 2.0)
     watcher = DesktopWatcher(collector_url=collector_url, data_directory=data_dir, min_session_duration=min_dur)
     try:
         watcher.start()

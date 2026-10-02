@@ -3,9 +3,7 @@ import * as crypto from 'crypto';
 import { ActivityEvent, CollectorClient } from './collector-client';
 
 interface CurrentSession {
-    file: string;
     workspace: string;
-    language: string;
     startTime: Date;
 }
 
@@ -14,6 +12,58 @@ let isWindowFocused = true;
 let outputChannel: vscode.OutputChannel;
 let collectorClient: CollectorClient;
 let statusBarItem: vscode.StatusBarItem;
+
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+let lastActivityTime: Date = new Date();
+let isIdle: boolean = false;
+let idleTimer: NodeJS.Timeout | null = null;
+
+function getCurrentWorkspace(): string {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.document) {
+        const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+        if (folder) {
+            return folder.name;
+        }
+    }
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) {
+        return folders[0].name;
+    }
+    return 'No Workspace';
+}
+
+function resetIdleTimer() {
+    const now = new Date();
+    if (isIdle) {
+        isIdle = false;
+        if (outputChannel) {
+            outputChannel.appendLine(`User active after idle; resuming tracking.`);
+        }
+        if (isWindowFocused) {
+            startSession(getCurrentWorkspace(), now);
+        }
+    }
+    lastActivityTime = now;
+
+    if (idleTimer) {
+        clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(() => {
+        onIdleTimeout();
+    }, IDLE_TIMEOUT_MS);
+}
+
+function onIdleTimeout() {
+    if (isIdle) {
+        return;
+    }
+    isIdle = true;
+    if (outputChannel) {
+        outputChannel.appendLine(`No activity for 5 minutes. Ending session at last activity timestamp: ${lastActivityTime.toISOString()}`);
+    }
+    endSession(lastActivityTime);
+}
 
 function getOffsetString(date: Date): string {
     const offset = date.getTimezoneOffset();
@@ -49,107 +99,104 @@ export function activate(context: vscode.ExtensionContext) {
 
     const showStatusCmd = vscode.commands.registerCommand('activityTracker.showStatus', () => {
         const status = currentSession 
-            ? `Tracking ${currentSession.file} in ${currentSession.workspace}`
+            ? `Tracking workspace ${currentSession.workspace}`
             : 'Not currently tracking an active editor';
         vscode.window.showInformationMessage(`Activity Tracker: ${status}. Events sent today: ${collectorClient.eventsSentToday}`);
     });
     context.subscriptions.push(showStatusCmd);
 
     context.subscriptions.push(
-        vscode.window.onDidChangeActiveTextEditor(editor => onEditorChange(editor)),
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            resetIdleTimer();
+            onEditorChange(editor);
+        }),
         vscode.window.onDidChangeWindowState(state => onWindowFocusChange(state)),
-        vscode.workspace.onDidChangeWorkspaceFolders(() => onWorkspaceChange()),
-        vscode.window.onDidChangeVisibleTextEditors(editors => onVisibleEditorsChange(editors))
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            resetIdleTimer();
+            onWorkspaceChange();
+        }),
+        vscode.window.onDidChangeVisibleTextEditors(editors => onVisibleEditorsChange(editors)),
+        vscode.workspace.onDidChangeTextDocument(() => resetIdleTimer()),
+        vscode.window.onDidChangeTextEditorSelection(() => resetIdleTimer()),
+        vscode.window.onDidChangeTextEditorVisibleRanges(() => resetIdleTimer())
     );
 
     // Initial check
     isWindowFocused = vscode.window.state.focused;
-    const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor && isWindowFocused) {
-        startSession(activeEditor);
+    resetIdleTimer();
+    if (isWindowFocused) {
+        startSession(getCurrentWorkspace());
     }
 }
 
 function onEditorChange(editor: vscode.TextEditor | undefined) {
-    endSession();
-    if (editor && isWindowFocused) {
-        startSession(editor);
+    if (!isWindowFocused || isIdle) {
+        return;
     }
+    const newWorkspace = getCurrentWorkspace();
+    if (currentSession) {
+        if (currentSession.workspace === newWorkspace) {
+            // A file change within the same workspace must not end the session.
+            return;
+        }
+        endSession();
+    }
+    startSession(newWorkspace);
 }
 
 function onWindowFocusChange(state: vscode.WindowState) {
     if (!state.focused) {
+        if (idleTimer) {
+            clearTimeout(idleTimer);
+            idleTimer = null;
+        }
         endSession();
         isWindowFocused = false;
     } else {
         isWindowFocused = true;
-        const activeEditor = vscode.window.activeTextEditor;
-        if (activeEditor) {
-            startSession(activeEditor);
-        }
+        isIdle = false;
+        resetIdleTimer();
+        startSession(getCurrentWorkspace());
     }
 }
 
 function onWorkspaceChange() {
-    const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor && isWindowFocused) {
+    if (!isWindowFocused || isIdle) {
+        return;
+    }
+    const newWorkspace = getCurrentWorkspace();
+    if (currentSession && currentSession.workspace !== newWorkspace) {
         endSession();
-        startSession(activeEditor);
+        startSession(newWorkspace);
+    } else if (!currentSession) {
+        startSession(newWorkspace);
     }
 }
 
 function onVisibleEditorsChange(editors: readonly vscode.TextEditor[]) {
-    // If the active editor is no longer visible, end session
-    const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor && !editors.includes(activeEditor)) {
-        endSession();
-    }
+    // No-op: workspace remains tracked even if tabs close
 }
 
-function startSession(editor: vscode.TextEditor) {
-    // Skip output channels and non-file schemes if possible, though 'file' and 'untitled' are common
-    if (editor.document.uri.scheme !== 'file' && editor.document.uri.scheme !== 'untitled') {
-        return;
-    }
-
-    const doc = editor.document;
-    const language = doc.languageId;
-    
-    let workspace = 'No Workspace';
-    let file = doc.fileName;
-
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
-    if (workspaceFolder) {
-        workspace = workspaceFolder.name;
-        // Make path relative to workspace root
-        file = vscode.workspace.asRelativePath(doc.uri, false);
-    } else {
-        // Just the file name if not in workspace
-        const path = require('path');
-        file = path.basename(doc.fileName);
-    }
-
+function startSession(workspace: string, startTime: Date = new Date()) {
     currentSession = {
-        file,
         workspace,
-        language,
-        startTime: new Date()
+        startTime: startTime
     };
     
-    outputChannel.appendLine(`Started tracking: ${file} [${language}] in ${workspace}`);
+    outputChannel.appendLine(`Started tracking workspace: ${workspace}`);
 }
 
-function endSession() {
+function endSession(explicitEndTime?: Date) {
     if (!currentSession) {
         return;
     }
 
-    const endTime = new Date();
+    const endTime = explicitEndTime ?? new Date();
     const durationMs = endTime.getTime() - currentSession.startTime.getTime();
-    const durationSeconds = Math.floor(durationMs / 1000);
+    const durationSeconds = Math.max(0, Math.floor(durationMs / 1000));
 
     const config = vscode.workspace.getConfiguration('activityTracker');
-    const minDuration = config.get<number>('minSessionDuration') ?? 40;
+    const minDuration = config.get<number>('minSessionDuration') ?? 2;
 
     if (durationSeconds >= minDuration) {
         let uuidStr = '';
@@ -168,22 +215,24 @@ function endSession() {
             duration_seconds: durationSeconds,
             source: 'vscode',
             context: {
-                workspace: currentSession.workspace,
-                file: currentSession.file,
-                language: currentSession.language
+                workspace: currentSession.workspace
             }
         };
 
         collectorClient.sendEvent(event);
-        outputChannel.appendLine(`Ended tracking: ${currentSession.file} (${durationSeconds}s)`);
+        outputChannel.appendLine(`Ended tracking workspace: ${currentSession.workspace} (${durationSeconds}s)`);
     } else {
-        outputChannel.appendLine(`Session too short (${durationSeconds}s), discarded: ${currentSession.file}`);
+        outputChannel.appendLine(`Session too short (${durationSeconds}s), discarded workspace: ${currentSession.workspace}`);
     }
 
     currentSession = null;
 }
 
 export function deactivate() {
+    if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+    }
     endSession();
     if (collectorClient) {
         collectorClient.dispose();

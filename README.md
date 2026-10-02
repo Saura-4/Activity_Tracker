@@ -77,7 +77,11 @@ Edit `config.json` to customize:
   "collector_host": "127.0.0.1",
   "collector_port": 8765,
   "strip_query_strings": true,
-  "session_merge_gap_seconds": 30.0
+  "session_merge_gap_seconds": 30.0,
+  "min_duration_seconds": 40.0,
+  "raw_min_duration_seconds": 2.0,
+  "auth_token": "",
+  "cors_origins": ["chrome-extension://*", "moz-extension://*", "vscode-webview://*"]
 }
 ```
 
@@ -140,7 +144,8 @@ Then install it in VS Code:
 
 Configure via VS Code Settings:
 - `activityTracker.collectorUrl`: Collector endpoint (default: `http://127.0.0.1:8765`)
-- `activityTracker.minSessionDuration`: Minimum session seconds to record (default: `1`)
+- `activityTracker.minSessionDuration`: Minimum session seconds to record (default: `2`)
+- `activityTracker.authToken`: Optional shared secret token for collector authentication (default: `""`)
 
 ### 6. Verify Events Are Recording
 
@@ -155,6 +160,15 @@ Get-Content D:\ActivityTracker\raw\2026-09-29.jsonl
 ```
 
 You should see JSONL entries with `"source": "browser"` and `"source": "vscode"`.
+
+### Scheduled Mobile Sync (Android)
+
+Android usagestats history expires over time. To ensure events are captured:
+- **Automatic:** The collector runs an automated sync thread every 30 minutes in the background when `android.enabled` is true in `config.json`.
+- **Windows Task Scheduler:** Alternatively, schedule `sync_mobile.bat` every 30 minutes:
+  ```powershell
+  schtasks /create /tn "ActivityTrackerMobileSync" /tr "S:\project\AW\sync_mobile.bat" /sc minute /mo 30
+  ```
 
 ### 7. Generate a Report
 
@@ -206,9 +220,7 @@ VS Code events:
   "duration_seconds": 1601,
   "source": "vscode",
   "context": {
-    "workspace": "RAG-Studio",
-    "file": "src/retriever.py",
-    "language": "python"
+    "workspace": "RAG-Studio"
   }
 }
 ```
@@ -219,22 +231,22 @@ Reports contain these sections:
 
 | Section | Description |
 |---------|-------------|
-| `summary` | Total active time, browser/VS Code split, session count, context switches |
-| `sources` | Duration and count per source (browser, vscode) |
+| `summary` | Total active time (union), PC/browser/VS Code/mobile/desktop/manual splits, brief session stats, session count |
+| `data_quality` | Active sources present, last mobile sync timestamp, offline watcher/collector ranges, fallback ranges |
+| `sources` | Duration and count per source (browser, vscode, desktop, mobile, manual) |
 | `domains` | Browser domains ranked by duration with percentages |
 | `titles` | Page titles ranked by duration (top 50) |
-| `workspaces` | VS Code workspaces with language breakdown and file counts |
-| `languages` | Programming languages ranked by duration |
+| `workspaces` | VS Code workspaces ranked by duration |
 | `longest_sessions` | Top 10 longest uninterrupted sessions |
 | `timeline` | All sessions in chronological order |
-| `hourly_breakdown` | Activity bucketed by hour of day |
+| `hourly_breakdown` | Activity bucketed by hour of day (union-based active seconds) |
 
 ## Key Invariants
 
 - **Only the focused/active context receives duration.** Background tabs never accumulate time.
 - **When the browser loses OS focus** (e.g., switching to VS Code), the browser session ends.
 - **When VS Code loses focus**, the VS Code session ends.
-- **Sessions are contiguous periods** of activity in one context. Same tab/file visited later = new session.
+- **Sessions are contiguous periods** of activity in one context. Same tab/workspace visited later = new session.
 - **No merging** of non-contiguous sessions in raw data (reports aggregate them).
 - **No keystroke/content logging.** Only metadata about what's active.
 
@@ -243,7 +255,7 @@ Reports contain these sections:
 - All data stays on your machine
 - URL query strings are stripped by default (`?token=...` → removed)
 - No source code contents, keystrokes, clipboard, or screenshots are recorded
-- Only metadata: domain, title, workspace name, relative file path, language
+- Only metadata: domain, title, workspace name
 
 ## Running Tests
 

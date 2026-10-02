@@ -79,20 +79,11 @@ def make_vscode_event(
     start: str,
     end: str,
     workspace: str,
-    file: str,
-    language: str,
+    file: str = "",
+    language: str = "",
     event_id: str = None
 ) -> dict:
-    """Create a VS Code activity event dict.
-    
-    Args:
-        start: ISO-8601 start timestamp
-        end: ISO-8601 end timestamp
-        workspace: Workspace/folder name
-        file: Relative file path
-        language: Language ID (e.g., 'python')
-        event_id: Optional UUID; auto-generated if not provided
-    """
+    """Create a VS Code activity event dict."""
     if not event_id:
         event_id = str(uuid.uuid4())
 
@@ -100,17 +91,19 @@ def make_vscode_event(
     end_dt = datetime.fromisoformat(end.replace('Z', '+00:00'))
     duration = (end_dt - start_dt).total_seconds()
 
+    ctx = {"workspace": workspace}
+    if file:
+        ctx["file"] = file
+    if language:
+        ctx["language"] = language
+
     return {
         "id": event_id,
         "start": start,
         "end": end,
         "duration_seconds": duration,
         "source": "vscode",
-        "context": {
-            "workspace": workspace,
-            "file": file,
-            "language": language
-        }
+        "context": ctx
     }
 
 
