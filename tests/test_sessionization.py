@@ -1471,6 +1471,30 @@ class TestPhase3DesktopWatcherMasterTimeline:
         assert "VS Code (no workspace)" in workspaces
         assert workspaces["VS Code (no workspace)"] == 600.0
 
+    def test_leftover_browser_time_preserves_desktop_window_title(self):
+        """When extension misses events during active browser session, desktop watcher window title is preserved."""
+        from tests.conftest import make_desktop_event, make_browser_event
+
+        events = [
+            # Desktop watcher says Chrome was foreground 10:00-10:15
+            make_desktop_event(ts(10, 0), ts(10, 15), "Google Chrome", "Daily Analysis Prompt - Google Chrome"),
+            # Extension event only recorded 10:00 to 10:05
+            make_browser_event(ts(10, 0), ts(10, 5), "chatgpt.com", "Daily Analysis Prompt"),
+        ]
+
+        report = aggregate_events(events)
+
+        assert report["summary"]["total_active_seconds"] == 900.0
+        assert report["summary"]["browser_seconds"] == 900.0
+
+        titles = {t["title"]: t["duration_seconds"] for t in report["titles"]}
+        assert "Chrome (unknown page)" not in titles
+        assert "Daily Analysis Prompt" in titles
+        assert titles["Daily Analysis Prompt"] == 900.0
+
+        domains = {d["domain"]: d["duration_seconds"] for d in report["domains"]}
+        assert domains.get("chatgpt.com") == 900.0
+
     def test_no_double_counting_across_pc_sources(self):
         """Simultaneous browser and VS Code extension events are gated by watcher foreground; no double counting."""
         from tests.conftest import make_desktop_event, make_browser_event, make_vscode_event
@@ -2006,13 +2030,12 @@ class TestPhaseAMinorRequirements:
         from reporting.generate_report import aggregate_events
         from datetime import datetime, timezone, timedelta
 
-        ist = timezone(timedelta(hours=5, minutes=30))
-        today_str = datetime.now(ist).strftime("%Y-%m-%d")
+        now_local = datetime.now().astimezone()
+        today_str = now_local.strftime("%Y-%m-%d")
 
         # Empty event list for today
         report = aggregate_events([], date_str=today_str)
         # Unobserved seconds should not be 86400 unless it's exactly 23:59:59
-        now_local = datetime.now().astimezone()
         day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
         elapsed = (now_local - day_start).total_seconds()
         assert report["summary"]["unobserved_seconds"] <= elapsed + 5.0
@@ -2388,12 +2411,62 @@ Today was productive.
         report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
         tl = report["timeline"]
         assert len(tl) == 3
-        # Entry 1: wholly covered by "build"
+        # Entry 1: wholly covered by "build" (100% >= 80%)
         assert tl[0]["label"] == "build"
-        # Entry 2: only half covered -> "unlabeled"
-        assert tl[1]["label"] == "unlabeled"
+        # Entry 2: only half covered by "practice" (50% < 80%) -> "mixed"
+        assert tl[1]["label"] == "mixed"
         # Entry 3: manual event -> None
         assert tl[2]["label"] is None
+
+    def test_session_spanning_two_labels_and_partly_unlabeled(self):
+        """One session spanning two labels and partly unlabeled exports segments and strictly reconciles with label_totals."""
+        events = [
+            # Single 90-minute session from 10:00 to 11:30 (5400 seconds)
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:30:00+05:30", "proj", "main.py", "python"),
+        ]
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "10:00", "end": "10:30", "label": "build", "planned": true},
+    {"start": "10:30", "end": "11:00", "label": "practice", "planned": false}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+
+        # 1. Timeline checks
+        tl = report["timeline"]
+        assert len(tl) == 1
+        assert tl[0]["duration_seconds"] == 5400.0
+        # Spans across multiple labels (each 33% < 80%) -> label is "mixed"
+        assert tl[0]["label"] == "mixed"
+        # Timeline entry has NO segments attached (per-entry segments dropped)
+        assert "segments" not in tl[0]
+
+        # 2. Top-level segments stored once in report["label_segments"] (labels.segments dropped)
+        assert "segments" not in report.get("labels", {})
+        segments = report["label_segments"]
+        assert len(segments) == 2
+        assert segments[0]["label"] == "build"
+        assert segments[0]["duration_seconds"] == 1800.0
+        assert segments[0]["planned"] is True
+        assert segments[1]["label"] == "practice"
+        assert segments[1]["duration_seconds"] == 1800.0
+        assert segments[1]["planned"] is False
+
+        # 3. Strict reconciliation: sum of segments equals label_totals and labeled_seconds
+        build_seg_sum = sum(s["duration_seconds"] for s in segments if s["label"] == "build")
+        practice_seg_sum = sum(s["duration_seconds"] for s in segments if s["label"] == "practice")
+        total_seg_sum = sum(s["duration_seconds"] for s in segments)
+
+        assert report["label_totals"]["build"]["duration_seconds"] == build_seg_sum == 1800.0
+        assert report["label_totals"]["build"]["planned_seconds"] == 1800.0
+        assert report["label_totals"]["practice"]["duration_seconds"] == practice_seg_sum == 1800.0
+        assert report["label_totals"]["practice"]["planned_seconds"] == 0.0
+        assert report["labeled_seconds"] == total_seg_sum == 3600.0
+        assert report["unlabeled_seconds"] == 1800.0
+        assert report["summary"]["total_active_seconds"] == 5400.0
+        assert report["label_coverage_pct"] == round(3600.0 / 5400.0 * 100, 1)  # 66.7%
 
     def test_strip_labels_block(self):
         """strip_labels_block removes hidden block before rendering markdown."""
@@ -2413,3 +2486,513 @@ Paragraph content."""
         assert "Paragraph content." in stripped
 
 
+
+# =============================================================================
+# Offline Labels Tests: rest, eat, walk, social
+# =============================================================================
+class TestOfflineLabels:
+    def test_infer_offline_label_rest(self):
+        """Sleep, nap, and rest activities infer 'rest' label."""
+        from collector.manual_storage import infer_offline_label
+
+        assert infer_offline_label("Sleep", "rest") == "rest"
+        assert infer_offline_label("Afternoon nap", "rest") == "rest"
+        assert infer_offline_label("Power nap", "") == "rest"
+        assert infer_offline_label("Resting", "other") == "rest"
+        assert infer_offline_label("Random Activity", "rest") == "rest"
+
+    def test_infer_offline_label_eat(self):
+        """Breakfast, lunch, dinner, snack activities infer 'eat' label."""
+        from collector.manual_storage import infer_offline_label
+
+        assert infer_offline_label("Lunch", "meal") == "eat"
+        assert infer_offline_label("Dinner", "meal") == "eat"
+        assert infer_offline_label("Snacks", "meal") == "eat"
+        assert infer_offline_label("Breakfast", "meal") == "eat"
+        assert infer_offline_label("Brunch with friends", "") == "eat"
+        assert infer_offline_label("Coffee break", "") == "eat"
+        assert infer_offline_label("Random Activity", "meal") == "eat"
+        assert infer_offline_label("Random Activity", "eat") == "eat"
+
+    def test_infer_offline_label_walk(self):
+        """Walk and stroll activities infer 'walk' label."""
+        from collector.manual_storage import infer_offline_label
+
+        assert infer_offline_label("Walk", "fitness") == "walk"
+        assert infer_offline_label("Morning stroll", "fitness") == "walk"
+        assert infer_offline_label("Walking to office", "") == "walk"
+
+    def test_infer_offline_label_social(self):
+        """Social activities like talking, calling, meeting infer 'social' label."""
+        from collector.manual_storage import infer_offline_label
+
+        assert infer_offline_label("talking with friends", "other") == "social"
+        assert infer_offline_label("Team sync", "discussion") == "social"
+        assert infer_offline_label("Phone call with mom", "other") == "social"
+        assert infer_offline_label("Hangout with friends", "other") == "social"
+        assert infer_offline_label("Random Activity", "discussion") == "social"
+
+    def test_infer_offline_label_none_for_unmatched(self):
+        """Activities that don't match any offline label return None."""
+        from collector.manual_storage import infer_offline_label
+
+        assert infer_offline_label("Gym", "health") is None
+        assert infer_offline_label("Shower", "personal") is None
+        assert infer_offline_label("Reading a book", "offline_study") is None
+        assert infer_offline_label("Commute", "commute") is None
+
+    def test_infer_offline_label_priority_eat_over_walk(self):
+        """'Evening Dinner & Walk' with meal category should be 'eat', not 'walk'."""
+        from collector.manual_storage import infer_offline_label
+
+        # Category 'meal' wins (eat is checked before walk)
+        assert infer_offline_label("Evening Dinner & Walk", "meal") == "eat"
+        # Without meal category, 'dinner' keyword matches eat
+        assert infer_offline_label("Dinner and Walk", "") == "eat"
+
+    def test_manual_event_label_in_timeline(self):
+        """Manual events in report timeline get auto-inferred offline labels."""
+        events = [
+            make_browser_event("2026-10-01T09:00:00+05:30", "2026-10-01T10:00:00+05:30", "github.com", "GitHub"),
+            {
+                "id": "man-sleep",
+                "start": "2026-10-01T01:00:00+05:30",
+                "end": "2026-10-01T09:00:00+05:30",
+                "duration_seconds": 28800.0,
+                "source": "manual",
+                "context": {"activity": "Sleep", "category": "rest"},
+            },
+            {
+                "id": "man-lunch",
+                "start": "2026-10-01T12:30:00+05:30",
+                "end": "2026-10-01T13:00:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Lunch", "category": "meal"},
+            },
+            {
+                "id": "man-walk",
+                "start": "2026-10-01T17:00:00+05:30",
+                "end": "2026-10-01T17:30:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Walk", "category": "fitness"},
+            },
+            {
+                "id": "man-chat",
+                "start": "2026-10-01T20:00:00+05:30",
+                "end": "2026-10-01T20:30:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "talking with friends", "category": "other"},
+            },
+            {
+                "id": "man-gym",
+                "start": "2026-10-01T16:00:00+05:30",
+                "end": "2026-10-01T16:45:00+05:30",
+                "duration_seconds": 2700.0,
+                "source": "manual",
+                "context": {"activity": "Gym", "category": "health"},
+            },
+        ]
+        report = aggregate_events(events, date_str="2026-10-01")
+        tl = report["timeline"]
+
+        # Find manual entries by activity name
+        manual_entries = {e["context"].get("activity", ""): e for e in tl if e["source"] == "manual"}
+
+        assert manual_entries["Sleep"]["label"] == "rest"
+        assert manual_entries["Lunch"]["label"] == "eat"
+        assert manual_entries["Walk"]["label"] == "walk"
+        assert manual_entries["talking with friends"]["label"] == "social"
+        assert manual_entries["Gym"]["label"] is None  # No offline label match
+
+    def test_manual_event_label_override_by_analysis_md(self):
+        """Explicit analysis.md label overrides auto-inferred offline label for manual events."""
+        events = [
+            {
+                "id": "man-walk",
+                "start": "2026-10-01T17:00:00+05:30",
+                "end": "2026-10-01T17:30:00+05:30",
+                "duration_seconds": 1800.0,
+                "source": "manual",
+                "context": {"activity": "Walk", "category": "fitness"},
+            },
+        ]
+        # Explicitly label the walk time as "leisure"
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "17:00", "end": "17:30", "label": "leisure", "planned": true}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        tl = report["timeline"]
+        assert len(tl) == 1
+        # Should be "leisure" from explicit override, not "walk" from auto-inference
+        assert tl[0]["label"] == "leisure"
+
+    def test_offline_labels_in_allowed_labels(self):
+        """Offline labels (rest, eat, walk, social) are in the global ALLOWED_LABELS."""
+        from collector.config import ALLOWED_LABELS
+
+        for lbl in ["rest", "eat", "walk", "social"]:
+            assert lbl in ALLOWED_LABELS, f"{lbl} not in ALLOWED_LABELS"
+
+    def test_offline_labels_in_typical_day_allowed(self):
+        """Offline labels (rest, eat, walk, social) are in typical_day ALLOWED_LABELS."""
+        from reporting.typical_day import ALLOWED_LABELS as TD_LABELS
+
+        for lbl in ["rest", "eat", "walk", "social"]:
+            assert lbl in TD_LABELS, f"{lbl} not in typical_day.ALLOWED_LABELS"
+
+    def test_focus_vs_drift_with_offline_neutral(self):
+        """Offline labels (rest, eat, walk, social) are neutral in Focus vs Drift."""
+        from reporting.typical_day import aggregate_focus_vs_drift, ALLOWED_LABELS
+
+        total_bins = 96
+        bin_width = 900  # 15 min
+        # Create a fake cached day with only 'rest' and 'eat' labels
+        day = {
+            "date": "2026-10-01",
+            "screen_seconds": [0.0] * total_bins,
+            "pc_seconds": [0.0] * total_bins,
+            "mobile_seconds": [0.0] * total_bins,
+            "label_seconds": {lbl: [0.0] * total_bins for lbl in ALLOWED_LABELS},
+            "planned_label_seconds": {lbl: [0.0] * total_bins for lbl in ALLOWED_LABELS},
+            "unplanned_label_seconds": {lbl: [0.0] * total_bins for lbl in ALLOWED_LABELS},
+            "coverage_pct": 80.0,
+            "sleep_metrics": {},
+        }
+        # Put 900s of "rest" in bin 0, 900s of "eat" in bin 48 (noon)
+        day["label_seconds"]["rest"][0] = 900.0
+        day["label_seconds"]["eat"][48] = 900.0
+        day["screen_seconds"][0] = 900.0
+        day["screen_seconds"][48] = 900.0
+
+        result = aggregate_focus_vs_drift(
+            cached_days=[day],
+            bin_minutes=15,
+            axis_start_hour=0,
+            min_coverage_pct=60.0,
+            unplanned_only=False,
+        )
+
+        assert result["qualified_days_count"] == 1
+        # Focus and drift should be 0 (rest and eat are neutral)
+        assert result["avg_focus_hours"] == 0.0
+        assert result["avg_drift_hours"] == 0.0
+        # Neutral bins should have the values
+        assert result["avg_neutral_minutes"][0] == 15.0  # 900s / 60
+        assert result["avg_neutral_minutes"][48] == 15.0
+
+
+# =============================================================================
+# Report Optimization & Lean Chat Report Tests
+# =============================================================================
+class TestReportOptimizationAndLeanChatReport:
+    def test_one_timezone_consistency(self):
+        """Every timestamp in both full report and chat report uses the same local offset, including label_segments."""
+        from reporting.generate_report import build_chat_report
+        import re
+
+        events = [
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "proj", "main.py", "python"),
+        ]
+        analysis_md = '<!-- labels\n{"labels": [{"start": "10:00", "end": "10:30", "label": "build"}]}\n-->'
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        chat = build_chat_report(report)
+
+        # Check label_segments in full report uses local offset +05:30, not UTC
+        assert len(report["label_segments"]) == 1
+        seg = report["label_segments"][0]
+        assert seg["start"] == "2026-10-01T10:00:00+05:30"
+        assert seg["end"] == "2026-10-01T10:30:00+05:30"
+
+        # Check all timestamps across both reports
+        iso_pat = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+        def verify_tz(obj, name):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    verify_tz(v, f"{name}.{k}")
+            elif isinstance(obj, list):
+                for i, it in enumerate(obj):
+                    verify_tz(it, f"{name}[{i}]")
+            elif isinstance(obj, str) and iso_pat.match(obj):
+                assert obj.endswith("+05:30"), f"Timestamp in {name} does not have local offset +05:30: {obj}"
+                assert "+00:00" not in obj and not obj.endswith("Z"), f"UTC offset found in {name}: {obj}"
+
+        verify_tz(report, "full_report")
+        verify_tz(chat, "chat_report")
+
+    def test_round_timestamps_to_seconds_no_microseconds(self):
+        """All timestamps in both reports are rounded to seconds with no microseconds."""
+        from reporting.generate_report import build_chat_report
+        import re
+
+        events = [
+            make_vscode_event("2026-10-01T10:00:00.456789+05:30", "2026-10-01T11:00:00.890123+05:30", "proj", "main.py", "python"),
+        ]
+        analysis_md = '<!-- labels\n{"labels": [{"start": "10:00", "end": "10:30", "label": "build"}]}\n-->'
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        chat = build_chat_report(report)
+
+        iso_pat = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+        micro_pat = re.compile(r"\.\d+")
+        def verify_no_micro(obj, name):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    verify_no_micro(v, f"{name}.{k}")
+            elif isinstance(obj, list):
+                for i, it in enumerate(obj):
+                    verify_no_micro(it, f"{name}[{i}]")
+            elif isinstance(obj, str) and iso_pat.match(obj):
+                assert not micro_pat.search(obj), f"Microseconds found in {name}: {obj}"
+
+        verify_no_micro(report, "full_report")
+        verify_no_micro(chat, "chat_report")
+
+    def test_merge_data_quality_ranges_under_60s(self):
+        """Fallback and watcher-offline ranges less than 60s apart are merged in full report."""
+        from reporting.generate_report import merge_data_quality_ranges
+        tz = timezone(timedelta(hours=5, minutes=30))
+        r1 = {"start": "2026-10-01T10:00:00+05:30", "end": "2026-10-01T10:05:00+05:30"}
+        r2 = {"start": "2026-10-01T10:05:30+05:30", "end": "2026-10-01T10:10:00+05:30"}  # 30s gap -> merge
+        r3 = {"start": "2026-10-01T10:12:00+05:30", "end": "2026-10-01T10:15:00+05:30"}  # 120s gap -> separate
+        merged = merge_data_quality_ranges([r1, r2, r3], tz, gap_threshold_seconds=60.0)
+        assert len(merged) == 2
+        assert merged[0]["start"] == "2026-10-01T10:00:00+05:30"
+        assert merged[0]["end"] == "2026-10-01T10:10:00+05:30"
+        assert merged[0]["duration_seconds"] == 600.0
+        assert merged[1]["start"] == "2026-10-01T10:12:00+05:30"
+        assert merged[1]["end"] == "2026-10-01T10:15:00+05:30"
+        assert merged[1]["duration_seconds"] == 180.0
+
+    def test_remove_duplication_full_report(self):
+        """Top-level label_segments is stored once; per-entry segments, labels.segments and duplicated label fields are dropped."""
+        events = [
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "proj", "main.py", "python"),
+        ]
+        analysis_md = '<!-- labels\n{"energy": 4, "labels": [{"start": "10:00", "end": "11:00", "label": "build"}]}\n-->'
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+
+        # 1. label_segments at top level
+        assert "label_segments" in report
+        assert len(report["label_segments"]) == 1
+
+        # 2. No per-entry segments in timeline
+        assert len(report["timeline"]) == 1
+        assert "segments" not in report["timeline"][0]
+        assert report["timeline"][0]["label"] == "build"
+
+        # 3. No labels.segments
+        assert "segments" not in report["labels"]
+
+        # 4. label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct kept in one place only (top level)
+        assert "label_totals" in report
+        assert "labeled_seconds" in report
+        assert "unlabeled_seconds" in report
+        assert "label_coverage_pct" in report
+        assert "label_totals" not in report["labels"]
+        assert "labeled_seconds" not in report["labels"]
+        assert "unlabeled_seconds" not in report["labels"]
+        assert "label_coverage_pct" not in report["labels"]
+        assert report["labels"] == {"energy": 4}
+
+    def test_compact_json_and_pretty_flag(self, tmp_data_dir):
+        """write_report writes compact single-line JSON by default, and indented JSON when pretty=True."""
+        from collector.config import Config
+        from reporting.generate_report import write_report
+        cfg = Config(data_directory=str(tmp_data_dir))
+        events = [
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T10:30:00+05:30", "proj", "main.py", "python"),
+        ]
+        report = aggregate_events(events, date_str="2026-10-01")
+        report["date"] = "2026-10-01"
+
+        # Default compact
+        path1 = write_report(cfg, report, "2026-10-01.json", pretty=False)
+        with open(path1, "r", encoding="utf-8") as f:
+            lines1 = f.readlines()
+        assert len(lines1) == 1, "Compact JSON report must be a single line"
+
+        chat_path = path1.replace(".json", ".chat.json")
+        with open(chat_path, "r", encoding="utf-8") as f:
+            chat_lines = f.readlines()
+        assert len(chat_lines) == 1, "Compact chat report must be a single line"
+
+        # Pretty flag
+        path2 = write_report(cfg, report, "2026-10-01.json", pretty=True)
+        with open(path2, "r", encoding="utf-8") as f:
+            lines2 = f.readlines()
+        assert len(lines2) > 10, "Pretty report must have indentation and multiple lines"
+
+    def test_chat_report_structure_and_omissions(self):
+        """Chat report contains required lean sections and omits raw_event_count, segments, longest_sessions, hourly_breakdown, offline ranges."""
+        from reporting.generate_report import build_chat_report
+        import re
+
+        events = [
+            make_browser_event("2026-10-01T10:00:00+05:30", "2026-10-01T10:30:00+05:30", "github.com", "GitHub PR", event_id="b1"),
+            {
+                "id": "man-1",
+                "start": "2026-10-01T12:00:00+05:30",
+                "end": "2026-10-01T13:00:00+05:30",
+                "duration_seconds": 3600.0,
+                "source": "manual",
+                "context": {"activity": "Walk", "category": "walk"},
+            },
+        ]
+        report = aggregate_events(events, date_str="2026-10-01")
+        report["date"] = "2026-10-01"
+        chat = build_chat_report(report)
+
+        # Required fields present
+        for req in ["date", "summary", "daily_metrics", "label_totals", "label_coverage_pct", "sources", "titles", "domains", "apps", "desktop_apps", "manual_events", "timeline", "data_quality"]:
+            assert req in chat, f"Missing required field {req} in chat report"
+
+        # Omitted sections
+        assert "longest_sessions" not in chat
+        assert "hourly_breakdown" not in chat
+        assert "raw_event_count" not in chat
+        assert "watcher_offline_ranges" not in chat["data_quality"]
+        assert "fallback_ranges" not in chat["data_quality"]
+        assert "collector_offline_ranges" not in chat["data_quality"]
+
+        # Condensed data_quality fields
+        dq = chat["data_quality"]
+        assert "sources_present" in dq
+        assert "last_mobile_sync" in dq
+        assert "total_fallback_seconds" in dq
+        assert "fallback_count" in dq
+        assert "total_watcher_offline_seconds" in dq
+        assert "watcher_offline_count" in dq
+        assert "label_warnings" in dq
+
+        # Timeline compact rows
+        tl = chat["timeline"]
+        assert len(tl) >= 2  # header + at least 1 entry
+        assert tl[0] == ["start", "end", "duration", "source", "name", "domain", "label"]
+        time_pat = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+        for row in tl[1:]:
+            assert time_pat.match(row[0]), f"Timeline start must be HH:MM:SS, got {row[0]}"
+            assert time_pat.match(row[1]), f"Timeline end must be HH:MM:SS, got {row[1]}"
+
+        # Manual events
+        assert len(chat["manual_events"]) == 1
+        me = chat["manual_events"][0]
+        assert me["activity"] == "Walk"
+        assert me["duration"] == 3600.0
+        assert "start" in me and "end" in me
+
+    def test_heavy_day_chat_report_under_30kb_and_totals_match(self):
+        """Chat report for a heavy day with ~165 timeline entries stays under 30 KB (and target < 25 KB) and totals match."""
+        from collector.config import get_config
+        from reporting.generate_report import generate_single_day_report, build_chat_report
+        cfg = get_config()
+        # 2026-10-02 has 165 timeline entries
+        report = generate_single_day_report(cfg, "2026-10-02")
+        assert len(report["timeline"]) >= 150, f"Expected ~165 timeline entries, got {len(report['timeline'])}"
+
+        chat = build_chat_report(report)
+        chat_json = json.dumps(chat, separators=(",", ":"), ensure_ascii=False)
+        chat_size_bytes = len(chat_json.encode("utf-8"))
+
+        # Under 30 KB and under target 25 KB
+        assert chat_size_bytes < 30 * 1024, f"Chat report size {chat_size_bytes} exceeds 30 KB"
+        assert chat_size_bytes < 25 * 1024, f"Chat report size {chat_size_bytes} exceeds target 25 KB"
+
+        # Totals match full report
+        assert chat["summary"]["screen_seconds"] == report["summary"]["screen_seconds"]
+        assert chat["summary"]["browser_seconds"] == report["summary"]["browser_seconds"]
+        assert chat["summary"]["vscode_seconds"] == report["summary"]["vscode_seconds"]
+        assert chat["summary"]["mobile_seconds"] == report["summary"]["mobile_seconds"]
+        assert chat["summary"]["desktop_seconds"] == report["summary"]["desktop_seconds"]
+        assert chat["summary"]["manual_seconds"] == report["summary"]["manual_seconds"]
+        assert chat["summary"]["brief_seconds"] == report["summary"]["brief_seconds"]
+        assert chat["summary"]["brief_session_count"] == report["summary"]["brief_session_count"]
+        assert chat["label_totals"] == report["label_totals"]
+        assert chat["label_coverage_pct"] == report["label_coverage_pct"]
+        assert chat["sources"] == report["sources"]
+        assert chat["data_quality"]["total_fallback_seconds"] == round(sum(r["duration_seconds"] for r in report["data_quality"]["fallback_ranges"]), 1)
+        assert chat["data_quality"]["total_watcher_offline_seconds"] == round(sum(r["duration_seconds"] for r in report["data_quality"]["watcher_offline_ranges"]), 1)
+
+    def test_labeled_time_on_screen_union_prevents_coverage_over_100(self):
+        """Labels resolved non-overlapping and applied to the union of PC and phone screen time
+        so each minute gets one label and is counted once. label_coverage_pct <= 100, sum(label_totals) <= screen_seconds."""
+        # Overlapping PC and mobile screen time:
+        # PC active 10:00 to 11:00 (3600s)
+        # Mobile active 10:30 to 11:30 (3600s)
+        # Screen union covers 10:00 to 11:30 = 5400s
+        events = [
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "proj", "main.py", "python"),
+            {
+                "id": "mob-overlap",
+                "start": "2026-10-01T10:30:00+05:30",
+                "end": "2026-10-01T11:30:00+05:30",
+                "duration_seconds": 3600.0,
+                "source": "mobile",
+                "context": {"app": "Twitter", "package": "com.twitter.android"},
+            },
+        ]
+        # Label covers the entire span 10:00 to 11:30 (5400s)
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "10:00", "end": "11:30", "label": "build"}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+
+        # Screen seconds is the union: 5400s
+        assert report["summary"]["screen_seconds"] == 5400.0
+        # Labeled seconds must NOT double-count the 10:30-11:00 overlap (which would be 7200s without union)
+        assert report["labeled_seconds"] == 5400.0
+        assert report["unlabeled_seconds"] == 0.0
+        assert report["label_coverage_pct"] == 100.0
+        # Sum of label_totals doesn't exceed screen_seconds
+        sum_totals = sum(v["duration_seconds"] for v in report["label_totals"].values())
+        assert sum_totals == 5400.0
+        assert sum_totals <= report["summary"]["screen_seconds"]
+        assert report["label_coverage_pct"] <= 100.0
+
+    def test_timeline_label_largest_share_80_percent_rule(self):
+        """Timeline label per entry is the label that covers >=80% of the entry, otherwise 'mixed'.
+        Exact per-slice labels remain in label_segments in the full report."""
+        events = [
+            # Entry 1: 10:00 to 11:00 (3600s). "build" covers 10:00 to 10:50 (3000s = 83.3% >= 80%).
+            make_vscode_event("2026-10-01T10:00:00+05:30", "2026-10-01T11:00:00+05:30", "proj", "main.py", "python"),
+            # Entry 2: 11:00 to 12:00 (3600s). "build" covers 11:00 to 11:45 (2700s = 75% < 80%), "practice" 11:45 to 12:00 (900s = 25%).
+            make_vscode_event("2026-10-01T11:00:00+05:30", "2026-10-01T12:00:00+05:30", "proj2", "main.py", "python"),
+            # Entry 3: 12:00 to 13:00 (3600s). No labels at all -> "unlabeled".
+            make_browser_event("2026-10-01T12:00:00+05:30", "2026-10-01T13:00:00+05:30", "docs.python.org", "Python Docs"),
+            # Entry 4: 13:00 to 14:00 (3600s). "learn" covers 13:00 to 13:30 (1800s = 50% < 80%), rest unlabeled -> "mixed".
+            make_browser_event("2026-10-01T13:00:00+05:30", "2026-10-01T14:00:00+05:30", "github.com", "GitHub"),
+        ]
+        analysis_md = """<!-- labels
+{
+  "labels": [
+    {"start": "10:00", "end": "10:50", "label": "build"},
+    {"start": "11:00", "end": "11:45", "label": "build"},
+    {"start": "11:45", "end": "12:00", "label": "practice"},
+    {"start": "13:00", "end": "13:30", "label": "learn"}
+  ]
+}
+-->"""
+        report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
+        tl = report["timeline"]
+
+        # Entry 1: 83.3% build -> "build"
+        assert tl[0]["label"] == "build"
+        # Entry 2: 75% build, 25% practice -> neither >= 80% -> "mixed"
+        assert tl[1]["label"] == "mixed"
+        # Entry 3: 0% labels -> "unlabeled"
+        assert tl[2]["label"] == "unlabeled"
+        # Entry 4: 50% learn, 50% unlabeled -> largest share 50% < 80% -> "mixed"
+        assert tl[3]["label"] == "mixed"
+
+        # Exact per-slice labels remain in label_segments in full report
+        assert len(report["label_segments"]) == 4
+        assert [s["label"] for s in report["label_segments"]] == ["build", "build", "practice", "learn"]

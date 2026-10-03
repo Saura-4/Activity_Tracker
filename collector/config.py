@@ -13,6 +13,10 @@ ALLOWED_LABELS = (
     "career",
     "comms",
     "leisure",
+    "rest",
+    "eat",
+    "walk",
+    "social",
     "other",
 )
 

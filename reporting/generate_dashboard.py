@@ -92,7 +92,7 @@ def generate_dashboard_files(data_dir_str: Any = "Record", output_str: str = "Re
     report_candidates = list(data_dir.glob("report/**/daily/*.json"))
 
     for f in sorted(report_candidates):
-        if f.name == "dashboard.html":
+        if f.name == "dashboard.html" or f.name.endswith(".chat.json"):
             continue
         try:
             with open(f, "r", encoding="utf-8") as fp:

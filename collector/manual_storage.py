@@ -34,6 +34,53 @@ def infer_category(activity_name: str) -> str:
     return "other"
 
 
+def infer_offline_label(activity_name: str, category: str = "") -> Optional[str]:
+    """Infer an offline label (rest, eat, walk, social) from activity name and category.
+
+    Returns one of 'rest', 'eat', 'walk', 'social', or None if no match.
+    Used for hybrid ingestion of manual/offline events into the label system.
+    """
+    act = (activity_name or "").lower().strip()
+    cat = (category or "").lower().strip()
+
+    # 1. Rest (sleep, nap, rest, doze, lie down)
+    if cat == "rest" or any(
+        re.search(r'\b' + re.escape(w) + r'\b', act)
+        for w in ['nap', 'sleep', 'rest', 'power nap', 'doze', 'resting', 'lie down']
+    ):
+        return "rest"
+
+    # 2. Eat (breakfast, lunch, dinner, snack, brunch, eating, meal, food, coffee, tea)
+    if cat in ('meal', 'eat', 'food') or any(
+        re.search(r'\b' + re.escape(w) + r'\b', act)
+        for w in [
+            'breakfast', 'lunch', 'dinner', 'snack', 'snacks', 'brunch',
+            'eating', 'food', 'meal', 'coffee', 'tea', 'cooking',
+        ]
+    ):
+        return "eat"
+
+    # 3. Walk (walk, walking, stroll, strolling)
+    if any(
+        re.search(r'\b' + re.escape(w) + r'\b', act)
+        for w in ['walk', 'walking', 'stroll', 'strolling']
+    ):
+        return "walk"
+
+    # 4. Social (talk, friends, hangout, discussion, call, chat, sync, meeting)
+    if cat in ('discussion', 'social') or any(
+        re.search(r'\b' + re.escape(w) + r'\b', act)
+        for w in [
+            'talk', 'talking', 'friends', 'friend', 'hangout', 'discussion',
+            'discuss', 'call', 'phone', 'chat', 'sync', '1:1', 'one-on-one',
+            'meeting', 'brainstorm',
+        ]
+    ):
+        return "social"
+
+    return None
+
+
 def get_manual_dir(data_dir: str, dt_or_date_str: Any) -> Path:
     """Compute structured path: Record/manual/YYYY/mmm/daily/"""
     if isinstance(dt_or_date_str, str):

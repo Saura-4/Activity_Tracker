@@ -310,7 +310,11 @@
         </button>
         <button id="tab-btn-heatmap" onclick="setActiveTab('heatmap')" class="tab-btn px-3.5 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent transition flex items-center gap-2 text-xs">
           <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
-          Heatmap & Trends
+          Calendar
+        </button>
+        <button id="tab-btn-typical-day" onclick="setActiveTab('typical-day')" class="tab-btn px-3.5 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent transition flex items-center gap-2 text-xs">
+          <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+          Typical Day
         </button>
         <button id="tab-btn-sessions" onclick="setActiveTab('sessions')" class="tab-btn px-3.5 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.04] border border-transparent transition flex items-center gap-2 text-xs">
           <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
@@ -727,6 +731,10 @@
           <button onclick="toggleLabelFilter('career')" id="filter-chip-career" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#a855f7]"></span>career</button>
           <button onclick="toggleLabelFilter('comms')" id="filter-chip-comms" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#ec4899]"></span>comms</button>
           <button onclick="toggleLabelFilter('leisure')" id="filter-chip-leisure" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#f43f5e]"></span>leisure</button>
+          <button onclick="toggleLabelFilter('rest')" id="filter-chip-rest" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#818cf8]"></span>rest</button>
+          <button onclick="toggleLabelFilter('eat')" id="filter-chip-eat" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#fb923c]"></span>eat</button>
+          <button onclick="toggleLabelFilter('walk')" id="filter-chip-walk" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#14b8a6]"></span>walk</button>
+          <button onclick="toggleLabelFilter('social')" id="filter-chip-social" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#c084fc]"></span>social</button>
           <button onclick="toggleLabelFilter('other')" id="filter-chip-other" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#64748b]"></span>other</button>
         </div>
 
@@ -822,6 +830,191 @@
           <div class="pt-2 border-t border-[var(--border)] text-[11px] text-slate-500">
             Rolling medians calculated dynamically from available daily reports.
           </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ==================== VIEW: TYPICAL DAY ==================== -->
+    <div id="view-tab-typical-day" class="hidden space-y-4">
+      
+      <!-- Range, Filter & Axis Controls Section -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] space-y-3">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
+          <div>
+            <h2 class="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
+              <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              Typical Day Analysis & Comparison
+            </h2>
+            <p class="text-xs text-slate-400 mt-0.5">Synthesize 24h behavioral patterns, sleep schedules, device share, and compare two periods with delta strips.</p>
+          </div>
+
+          <!-- Presets -->
+          <div class="flex items-center gap-1.5 bg-[#0c0e16] p-1 rounded-lg border border-white/[0.08] text-xs font-medium">
+            <span class="text-[11px] text-slate-500 px-1 font-mono uppercase">Presets:</span>
+            <button onclick="setTypicalDayPreset('7d')" id="td-preset-7d" class="px-2.5 py-1 rounded bg-white/[0.08] text-white transition">Last 7d</button>
+            <button onclick="setTypicalDayPreset('14d')" id="td-preset-14d" class="px-2.5 py-1 rounded text-slate-400 hover:text-white transition">Last 14d</button>
+            <button onclick="setTypicalDayPreset('30d')" id="td-preset-30d" class="px-2.5 py-1 rounded text-slate-400 hover:text-white transition">Last 30d</button>
+            <button onclick="setTypicalDayPreset('period_vs_prev')" id="td-preset-period-vs-prev" class="px-2.5 py-1 rounded text-slate-400 hover:text-white transition">Period vs Prev</button>
+          </div>
+        </div>
+
+        <!-- Range Selectors (Dual Range Grid) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          <!-- Range A Box -->
+          <div class="p-3 rounded-lg bg-black/20 border border-white/[0.06] space-y-2">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                <span class="text-xs font-semibold text-slate-200">Range A (Target)</span>
+              </div>
+              <span id="td-badge-range-a" class="text-[11px] font-mono text-slate-400 bg-white/[0.04] px-2 py-0.5 rounded border border-white/[0.06]">0 days</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <div class="flex-1">
+                <label class="block text-[10px] text-slate-500 mb-0.5">Start Date</label>
+                <input type="date" id="td-range-a-start" class="w-full bg-[#0c0e16] border border-white/[0.08] rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500" onchange="onTypicalDayRangeChange()">
+              </div>
+              <div class="flex-1">
+                <label class="block text-[10px] text-slate-500 mb-0.5">End Date</label>
+                <input type="date" id="td-range-a-end" class="w-full bg-[#0c0e16] border border-white/[0.08] rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500" onchange="onTypicalDayRangeChange()">
+              </div>
+            </div>
+          </div>
+
+          <!-- Range B Box -->
+          <div class="p-3 rounded-lg bg-black/20 border border-white/[0.06] space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="td-enable-range-b" class="rounded bg-black/40 border-white/[0.2] text-indigo-600 focus:ring-0" onchange="onTypicalDayToggleRangeB()">
+                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span class="text-xs font-semibold text-slate-200">Compare with Range B</span>
+              </label>
+              <span id="td-badge-range-b" class="text-[11px] font-mono text-slate-400 bg-white/[0.04] px-2 py-0.5 rounded border border-white/[0.06]">Disabled</span>
+            </div>
+            <div id="td-range-b-inputs" class="flex items-center gap-2 text-xs opacity-50 pointer-events-none transition">
+              <div class="flex-1">
+                <label class="block text-[10px] text-slate-500 mb-0.5">Start Date</label>
+                <input type="date" id="td-range-b-start" class="w-full bg-[#0c0e16] border border-white/[0.08] rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-emerald-500" onchange="onTypicalDayRangeChange()">
+              </div>
+              <div class="flex-1">
+                <label class="block text-[10px] text-slate-500 mb-0.5">End Date</label>
+                <input type="date" id="td-range-b-end" class="w-full bg-[#0c0e16] border border-white/[0.08] rounded px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-emerald-500" onchange="onTypicalDayRangeChange()">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filters & Axis Controls Row -->
+        <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--border)] text-xs">
+          <!-- Filters -->
+          <div class="flex flex-wrap items-center gap-3">
+            <!-- Day filter -->
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-500 text-[11px]">Days:</span>
+              <div class="inline-flex bg-[#0c0e16] p-0.5 rounded border border-white/[0.08]" id="td-filter-day-type">
+                <button onclick="setTypicalDayDayFilter('all')" id="td-day-all" class="px-2 py-0.5 rounded bg-white/[0.08] text-white">All</button>
+                <button onclick="setTypicalDayDayFilter('weekdays')" id="td-day-weekdays" class="px-2 py-0.5 rounded text-slate-400 hover:text-white">Weekdays</button>
+                <button onclick="setTypicalDayDayFilter('weekends')" id="td-day-weekends" class="px-2 py-0.5 rounded text-slate-400 hover:text-white">Weekends</button>
+              </div>
+            </div>
+
+            <!-- Device filter -->
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-500 text-[11px]">Device:</span>
+              <div class="inline-flex bg-[#0c0e16] p-0.5 rounded border border-white/[0.08]" id="td-filter-device">
+                <button onclick="setTypicalDayDeviceFilter('all')" id="td-dev-all" class="px-2 py-0.5 rounded bg-white/[0.08] text-white">All</button>
+                <button onclick="setTypicalDayDeviceFilter('pc')" id="td-dev-pc" class="px-2 py-0.5 rounded text-slate-400 hover:text-white">PC</button>
+                <button onclick="setTypicalDayDeviceFilter('phone')" id="td-dev-phone" class="px-2 py-0.5 rounded text-slate-400 hover:text-white">Phone</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Axis Controls -->
+          <div class="flex flex-wrap items-center gap-3">
+            <!-- Bin resolution -->
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-500 text-[11px]">Resolution:</span>
+              <select id="td-bin-select" onchange="onTypicalDayAxisChange()" class="bg-[#0c0e16] border border-white/[0.08] rounded px-2 py-1 text-slate-200 text-xs focus:outline-none">
+                <option value="15" selected>15 min (96 bins)</option>
+                <option value="30">30 min (48 bins)</option>
+                <option value="60">60 min (24 bins)</option>
+              </select>
+            </div>
+
+            <!-- Axis Start -->
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-500 text-[11px]">Axis Start:</span>
+              <select id="td-axis-start-select" onchange="onTypicalDayAxisChange()" class="bg-[#0c0e16] border border-white/[0.08] rounded px-2 py-1 text-slate-200 text-xs focus:outline-none">
+                <option value="0">00:00 (Midnight)</option>
+                <option value="6">06:00 (Morning)</option>
+                <option value="12">12:00 (Noon)</option>
+                <option value="18" selected>18:00 (Evening / Night-friendly)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Layer Selector Tabs -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--border)]">
+          <div class="inline-flex bg-[#0c0e16] p-1 rounded-lg border border-white/[0.08] text-xs font-medium gap-1" id="td-layer-tabs">
+            <button onclick="setTypicalDayLayer('activity')" id="td-layer-btn-activity" class="px-3 py-1 rounded bg-white/[0.08] text-white">Activity</button>
+            <button onclick="setTypicalDayLayer('sleep')" id="td-layer-btn-sleep" class="px-3 py-1 rounded text-slate-400 hover:text-white">Sleep</button>
+            <button onclick="setTypicalDayLayer('device')" id="td-layer-btn-device" class="px-3 py-1 rounded text-slate-400 hover:text-white">Device</button>
+            <button onclick="setTypicalDayLayer('label')" id="td-layer-btn-label" class="px-3 py-1 rounded text-slate-400 hover:text-white">Labels</button>
+            <button onclick="setTypicalDayLayer('focus_drift')" id="td-layer-btn-focus_drift" class="px-3 py-1 rounded text-slate-400 hover:text-white">Focus vs Drift</button>
+          </div>
+
+          <div id="td-label-selector-container" class="hidden flex-wrap items-center gap-1.5 text-[11px]">
+            <span class="text-slate-500">Filter labels:</span>
+            <div id="td-label-pills" class="flex flex-wrap gap-1"></div>
+          </div>
+
+          <div id="td-focus-drift-controls" class="hidden flex-wrap items-center gap-3 text-[11px]">
+            <label class="flex items-center gap-1.5 cursor-pointer text-slate-300 select-none">
+              <input type="checkbox" id="td-unplanned-drift-toggle" checked onchange="onFocusDriftToggleChange()" class="rounded border-white/[0.2] bg-white/[0.05] text-indigo-500 focus:ring-0">
+              <span>Unplanned leisure only</span>
+            </label>
+            <div class="flex items-center gap-1.5 text-slate-400">
+              <span>Min coverage:</span>
+              <input type="number" id="td-focus-min-coverage" min="0" max="100" value="60" onchange="onFocusDriftCoverageChange()" class="w-12 bg-[#0c0e16] border border-white/[0.1] rounded px-1.5 py-0.5 text-xs text-white text-center">
+              <span class="text-slate-500">%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Day Inclusion & Quality Status Container -->
+      <div id="td-status-container" class="space-y-2"></div>
+
+      <!-- Horizontal Strips Visualization Card -->
+      <section class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
+          <div class="flex items-center gap-2">
+            <span id="td-current-layer-title" class="text-xs font-semibold text-slate-200">Activity Intensity</span>
+            <span id="td-layer-description" class="text-[11px] text-slate-500">(% of included days with screen activity)</span>
+          </div>
+          <div id="td-strips-legend" class="flex items-center gap-3 text-[11px] text-slate-400"></div>
+        </div>
+
+        <!-- Strips track container -->
+        <div id="td-strips-view" class="space-y-4">
+          <!-- Rendered dynamically -->
+        </div>
+      </section>
+
+      <!-- Comparison Metrics Table Card -->
+      <section id="td-comparison-section" class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] space-y-3">
+        <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+          <h3 class="text-xs font-semibold text-slate-200 flex items-center gap-2">
+            <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+            Comparison & Regularity Summary
+          </h3>
+          <span id="td-table-subtitle" class="text-[11px] font-mono text-slate-400">Range A vs Range B</span>
+        </div>
+
+        <div id="td-comparison-table-wrapper" class="overflow-x-auto">
+          <!-- Rendered dynamically -->
         </div>
       </section>
 
@@ -1021,6 +1214,10 @@
       "career": "#a855f7",
       "comms": "#ec4899",
       "leisure": "#f43f5e",
+      "rest": "#818cf8",
+      "eat": "#fb923c",
+      "walk": "#14b8a6",
+      "social": "#c084fc",
       "other": "#64748b",
       "unlabeled": "#475569"
     };
@@ -1483,7 +1680,7 @@
     }
 
     function setActiveTab(tab) {
-      const tabs = ["overview", "analytics", "heatmap", "sessions", "journal"];
+      const tabs = ["overview", "analytics", "heatmap", "typical-day", "sessions", "journal"];
       if (!tabs.includes(tab)) tab = "overview";
       activeMainTab = tab;
 
@@ -1507,6 +1704,8 @@
       });
       if (activeMainTab === "heatmap") {
         renderHeatmapView();
+      } else if (activeMainTab === "typical-day") {
+        renderTypicalDayView();
       }
       persistDashboardState();
     }
@@ -3852,6 +4051,10 @@
             if (ctx && ctx.toLowerCase().includes("sleep")) {
               isSleep = true;
             }
+            // Include offline label (rest, eat, walk, social) in label layer
+            if (item.label) {
+              labelDurations[item.label] = (labelDurations[item.label] || 0) + oDur;
+            }
           } else {
             screenIntervals.push([oStart, oEnd]);
             if (["browser", "desktop", "vscode"].includes(item.source)) {
@@ -4038,6 +4241,10 @@
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#a855f7]"></span> career</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#ec4899]"></span> comms</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#f43f5e]"></span> leisure</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#818cf8]"></span> rest</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#fb923c]"></span> eat</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#14b8a6]"></span> walk</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#c084fc]"></span> social</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#64748b]"></span> other</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#475569]"></span> unlabeled</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#1e293b] border border-orange-400 border-dashed"></span> offline</span>
@@ -4341,7 +4548,7 @@
 
         const actSec = dm.active_seconds || sum.total_active_seconds || 0;
         totalActiveSecs += actSec;
-        totalLabeledSecs += (labels.labeled_seconds || 0);
+        totalLabeledSecs += (rep.labeled_seconds ?? labels.labeled_seconds ?? 0);
 
         const tl = rep.timeline || [];
         tl.forEach(item => {
@@ -4713,6 +4920,1788 @@
       renderMultiDayHourlyView(container, daysList);
     }
 
+    // =========================================================================
+    // TYPICAL DAY VIEW CONTROLLER & RENDERING LOGIC
+    // =========================================================================
+    let typicalDayPreset = "7d";
+    let typicalDayRangeA = { start: "", end: "" };
+    let typicalDayRangeB = { start: "", end: "" };
+    let typicalDayEnableRangeB = false;
+    let typicalDayDayFilter = "all"; // "all", "weekdays", "weekends"
+    let typicalDayDeviceFilter = "all"; // "all", "pc", "phone"
+    let typicalDayBinMinutes = 15; // 15, 30, 60
+    let typicalDayAxisStartHour = 18; // 0, 6, 12, 18
+    let typicalDayCurrentLayer = "activity"; // "activity", "sleep", "device", "label", "focus_drift"
+    let typicalDayUnplannedOnly = true;
+    let typicalDayFocusMinCoverage = 60.0;
+    const TYPICAL_DAY_ALLOWED_LABELS = ["build", "practice", "learn", "stay-current", "career", "comms", "leisure", "rest", "eat", "walk", "social", "other"];
+    let typicalDaySelectedLabels = new Set(TYPICAL_DAY_ALLOWED_LABELS);
+    const TYPICAL_DAY_CACHE = {}; // date -> precomputed canonical 96-bin arrays
+
+    const TYPICAL_DAY_LABEL_COLORS = {
+      "build": "#3b82f6",
+      "practice": "#8b5cf6",
+      "learn": "#10b981",
+      "stay-current": "#06b6d4",
+      "career": "#f59e0b",
+      "comms": "#6366f1",
+      "leisure": "#ec4899",
+      "rest": "#818cf8",
+      "eat": "#fb923c",
+      "walk": "#14b8a6",
+      "social": "#c084fc",
+      "other": "#64748b",
+      "unlabeled": "#334155"
+    };
+
+    function setTypicalDayPreset(preset) {
+      typicalDayPreset = preset;
+      const refDate = currentDate || localToday;
+      const endD = new Date(refDate + "T00:00:00");
+
+      ["7d", "14d", "30d", "period-vs-prev"].forEach(p => {
+        const btn = document.getElementById(`td-preset-${p}`);
+        if (btn) {
+          if (p === preset || (p === "period-vs-prev" && preset === "period_vs_prev")) {
+            btn.className = "px-2.5 py-1 rounded bg-white/[0.08] text-white transition font-medium";
+          } else {
+            btn.className = "px-2.5 py-1 rounded text-slate-400 hover:text-white transition";
+          }
+        }
+      });
+
+      function fmtDate(d) {
+        return d.toLocaleDateString("en-CA");
+      }
+
+      if (preset === "7d") {
+        const startD = new Date(endD);
+        startD.setDate(startD.getDate() - 6);
+        typicalDayRangeA = { start: fmtDate(startD), end: fmtDate(endD) };
+        typicalDayEnableRangeB = false;
+      } else if (preset === "14d") {
+        const startD = new Date(endD);
+        startD.setDate(startD.getDate() - 13);
+        typicalDayRangeA = { start: fmtDate(startD), end: fmtDate(endD) };
+        typicalDayEnableRangeB = false;
+      } else if (preset === "30d") {
+        const startD = new Date(endD);
+        startD.setDate(startD.getDate() - 29);
+        typicalDayRangeA = { start: fmtDate(startD), end: fmtDate(endD) };
+        typicalDayEnableRangeB = false;
+      } else if (preset === "period_vs_prev") {
+        // Range A: last 7 days; Range B: 7 days prior
+        const startA = new Date(endD);
+        startA.setDate(startA.getDate() - 6);
+        typicalDayRangeA = { start: fmtDate(startA), end: fmtDate(endD) };
+
+        const endB = new Date(startA);
+        endB.setDate(endB.getDate() - 1);
+        const startB = new Date(endB);
+        startB.setDate(startB.getDate() - 6);
+        typicalDayRangeB = { start: fmtDate(startB), end: fmtDate(endB) };
+        typicalDayEnableRangeB = true;
+      }
+
+      // Update input fields
+      const aStartIn = document.getElementById("td-range-a-start");
+      const aEndIn = document.getElementById("td-range-a-end");
+      const bStartIn = document.getElementById("td-range-b-start");
+      const bEndIn = document.getElementById("td-range-b-end");
+      const bEnableIn = document.getElementById("td-enable-range-b");
+
+      if (aStartIn) aStartIn.value = typicalDayRangeA.start;
+      if (aEndIn) aEndIn.value = typicalDayRangeA.end;
+      if (bStartIn) bStartIn.value = typicalDayRangeB.start || "";
+      if (bEndIn) bEndIn.value = typicalDayRangeB.end || "";
+      if (bEnableIn) bEnableIn.checked = typicalDayEnableRangeB;
+
+      updateRangeBInputsUI();
+      renderTypicalDayView();
+    }
+
+    function onTypicalDayToggleRangeB() {
+      const bEnableIn = document.getElementById("td-enable-range-b");
+      typicalDayEnableRangeB = bEnableIn ? bEnableIn.checked : false;
+      if (typicalDayEnableRangeB && (!typicalDayRangeB.start || !typicalDayRangeB.end)) {
+        // Default Range B to previous period of same length
+        const sA = new Date((typicalDayRangeA.start || currentDate) + "T00:00:00");
+        const eA = new Date((typicalDayRangeA.end || currentDate) + "T00:00:00");
+        const diffDays = Math.max(1, Math.round((eA - sA) / (86400 * 1000)) + 1);
+
+        const eB = new Date(sA);
+        eB.setDate(eB.getDate() - 1);
+        const sB = new Date(eB);
+        sB.setDate(sB.getDate() - (diffDays - 1));
+
+        typicalDayRangeB = {
+          start: sB.toLocaleDateString("en-CA"),
+          end: eB.toLocaleDateString("en-CA")
+        };
+        const bStartIn = document.getElementById("td-range-b-start");
+        const bEndIn = document.getElementById("td-range-b-end");
+        if (bStartIn) bStartIn.value = typicalDayRangeB.start;
+        if (bEndIn) bEndIn.value = typicalDayRangeB.end;
+      }
+      updateRangeBInputsUI();
+      renderTypicalDayView();
+    }
+
+    function updateRangeBInputsUI() {
+      const container = document.getElementById("td-range-b-inputs");
+      const badge = document.getElementById("td-badge-range-b");
+      if (typicalDayEnableRangeB) {
+        if (container) {
+          container.classList.remove("opacity-50", "pointer-events-none");
+        }
+        if (badge) {
+          badge.textContent = "Active";
+          badge.className = "text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20";
+        }
+      } else {
+        if (container) {
+          container.classList.add("opacity-50", "pointer-events-none");
+        }
+        if (badge) {
+          badge.textContent = "Disabled";
+          badge.className = "text-[11px] font-mono text-slate-400 bg-white/[0.04] px-2 py-0.5 rounded border border-white/[0.06]";
+        }
+      }
+    }
+
+    function onTypicalDayRangeChange() {
+      const aStartIn = document.getElementById("td-range-a-start");
+      const aEndIn = document.getElementById("td-range-a-end");
+      const bStartIn = document.getElementById("td-range-b-start");
+      const bEndIn = document.getElementById("td-range-b-end");
+
+      if (aStartIn && aEndIn && aStartIn.value && aEndIn.value) {
+        typicalDayRangeA = { start: aStartIn.value, end: aEndIn.value };
+      }
+      if (bStartIn && bEndIn && bStartIn.value && bEndIn.value) {
+        typicalDayRangeB = { start: bStartIn.value, end: bEndIn.value };
+      }
+      renderTypicalDayView();
+    }
+
+    function setTypicalDayDayFilter(f) {
+      typicalDayDayFilter = f;
+      ["all", "weekdays", "weekends"].forEach(k => {
+        const btn = document.getElementById(`td-day-${k}`);
+        if (btn) {
+          if (k === f) {
+            btn.className = "px-2 py-0.5 rounded bg-white/[0.08] text-white";
+          } else {
+            btn.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white";
+          }
+        }
+      });
+      renderTypicalDayView();
+    }
+
+    function setTypicalDayDeviceFilter(f) {
+      typicalDayDeviceFilter = f;
+      ["all", "pc", "phone"].forEach(k => {
+        const btn = document.getElementById(`td-dev-${k}`);
+        if (btn) {
+          if (k === f) {
+            btn.className = "px-2 py-0.5 rounded bg-white/[0.08] text-white";
+          } else {
+            btn.className = "px-2 py-0.5 rounded text-slate-400 hover:text-white";
+          }
+        }
+      });
+      renderTypicalDayView();
+    }
+
+    function onTypicalDayAxisChange() {
+      const binSel = document.getElementById("td-bin-select");
+      const axisSel = document.getElementById("td-axis-start-select");
+      if (binSel) typicalDayBinMinutes = parseInt(binSel.value, 10);
+      if (axisSel) typicalDayAxisStartHour = parseInt(axisSel.value, 10);
+      renderTypicalDayView();
+    }
+
+    function setTypicalDayLayer(layer) {
+      typicalDayCurrentLayer = layer;
+      ["activity", "sleep", "device", "label", "focus_drift"].forEach(l => {
+        const btn = document.getElementById(`td-layer-btn-${l}`);
+        if (btn) {
+          if (l === layer) {
+            btn.className = "px-3 py-1 rounded bg-white/[0.08] text-white";
+          } else {
+            btn.className = "px-3 py-1 rounded text-slate-400 hover:text-white";
+          }
+        }
+      });
+
+      const labelSelector = document.getElementById("td-label-selector-container");
+      if (labelSelector) {
+        if (layer === "label") {
+          labelSelector.classList.remove("hidden");
+          labelSelector.classList.add("flex");
+          renderTypicalDayLabelPills();
+        } else {
+          labelSelector.classList.add("hidden");
+          labelSelector.classList.remove("flex");
+        }
+      }
+
+      const focusControls = document.getElementById("td-focus-drift-controls");
+      if (focusControls) {
+        if (layer === "focus_drift") {
+          focusControls.classList.remove("hidden");
+          focusControls.classList.add("flex");
+        } else {
+          focusControls.classList.add("hidden");
+          focusControls.classList.remove("flex");
+        }
+      }
+
+      renderTypicalDayView();
+    }
+
+    function onFocusDriftToggleChange() {
+      const chk = document.getElementById("td-unplanned-drift-toggle");
+      if (chk) typicalDayUnplannedOnly = chk.checked;
+      renderTypicalDayView();
+    }
+
+    function onFocusDriftCoverageChange() {
+      const inEl = document.getElementById("td-focus-min-coverage");
+      if (inEl) {
+        const val = parseFloat(inEl.value);
+        if (!isNaN(val)) typicalDayFocusMinCoverage = Math.max(0, Math.min(100, val));
+      }
+      renderTypicalDayView();
+    }
+
+    function renderTypicalDayLabelPills() {
+      const container = document.getElementById("td-label-pills");
+      if (!container) return;
+      container.innerHTML = "";
+
+      TYPICAL_DAY_ALLOWED_LABELS.forEach(lbl => {
+        const isSelected = typicalDaySelectedLabels.has(lbl);
+        const pill = document.createElement("button");
+        pill.onclick = () => {
+          if (typicalDaySelectedLabels.has(lbl)) {
+            if (typicalDaySelectedLabels.size > 1) typicalDaySelectedLabels.delete(lbl);
+          } else {
+            typicalDaySelectedLabels.add(lbl);
+          }
+          renderTypicalDayLabelPills();
+          renderTypicalDayView();
+        };
+        const color = TYPICAL_DAY_LABEL_COLORS[lbl] || "#64748b";
+        pill.className = `px-2 py-0.5 rounded text-[10px] font-mono border transition flex items-center gap-1.5 ${
+          isSelected
+            ? "bg-white/[0.08] text-white border-white/[0.2]"
+            : "bg-transparent text-slate-500 border-white/[0.05] hover:text-slate-300"
+        }`;
+        pill.innerHTML = `<span class="w-1.5 h-1.5 rounded-full" style="background-color: ${color}"></span>${lbl}`;
+        container.appendChild(pill);
+      });
+    }
+
+    // --- Math & Time Helpers ---
+
+    function tdTimeStrToSeconds(str) {
+      if (!str) return null;
+      try {
+        if (str.includes("T")) {
+          const dt = new Date(str);
+          return dt.getHours() * 3600 + dt.getMinutes() * 60 + dt.getSeconds();
+        }
+        const parts = str.split(":");
+        const h = parseInt(parts[0], 10);
+        const m = parseInt(parts[1] || 0, 10);
+        const s = parseFloat(parts[2] || 0);
+        return (h * 3600 + m * 60 + s) % 86400;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function tdSecondsToTimeStr(sec) {
+      if (sec === null || sec === undefined) return "--:--";
+      const totalSec = Math.round(sec) % 86400;
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    }
+
+    function tdCircularMedianAndIqr(secondsList) {
+      if (!secondsList || secondsList.length === 0) return { median: null, iqr: null, mean: null };
+
+      let sinSum = 0;
+      let cosSum = 0;
+      const n = secondsList.length;
+      secondsList.forEach(s => {
+        const theta = (2 * Math.PI * (s % 86400)) / 86400;
+        sinSum += Math.sin(theta);
+        cosSum += Math.cos(theta);
+      });
+
+      let meanTheta = Math.atan2(sinSum / n, cosSum / n);
+      if (meanTheta < 0) meanTheta += 2 * Math.PI;
+      const meanSeconds = (meanTheta / (2 * Math.PI)) * 86400;
+
+      // Linearize relative to mean angle
+      const relative = secondsList.map(s => ((s - meanSeconds + 43200) % 86400 + 86400) % 86400 - 43200);
+      relative.sort((a, b) => a - b);
+
+      const mid = Math.floor(relative.length / 2);
+      const medRel = (relative.length % 2 === 1)
+        ? relative[mid]
+        : (relative[mid - 1] + relative[mid]) / 2;
+
+      const median = ((meanSeconds + medRel + 86400) % 86400 + 86400) % 86400;
+
+      function percentile(arr, p) {
+        const k = (arr.length - 1) * p;
+        const f = Math.floor(k);
+        const c = Math.ceil(k);
+        if (f === c) return arr[f];
+        return arr[f] * (c - k) + arr[c] * (k - f);
+      }
+
+      const q1 = percentile(relative, 0.25);
+      const q3 = percentile(relative, 0.75);
+      const iqr = Math.max(0, q3 - q1);
+
+      return { median, iqr, mean: meanSeconds };
+    }
+
+    function tdFormatDelta(valA, valB, isTimeOfDay = true) {
+      if (valA === null || valA === undefined || valB === null || valB === undefined) return "--";
+
+      if (isTimeOfDay) {
+        const diffSec = ((valB - valA + 43200) % 86400 + 86400) % 86400 - 43200;
+        if (Math.abs(diffSec) < 60) return "0m (same)";
+        const sign = diffSec > 0 ? "+" : "-";
+        const direction = diffSec > 0 ? "later" : "earlier";
+        const totalM = Math.round(Math.abs(diffSec) / 60);
+        const h = Math.floor(totalM / 60);
+        const m = totalM % 60;
+        if (h > 0) return `${sign}${h}h ${String(m).padStart(2, "0")}m ${direction}`;
+        return `${sign}${m}m ${direction}`;
+      } else {
+        const diffSec = valB - valA;
+        if (Math.abs(diffSec) < 60) return "0m (same)";
+        const sign = diffSec > 0 ? "+" : "-";
+        const totalM = Math.round(Math.abs(diffSec) / 60);
+        const h = Math.floor(totalM / 60);
+        const m = totalM % 60;
+        if (h > 0) return `${sign}${h}h ${String(m).padStart(2, "0")}m`;
+        return `${sign}${m}m`;
+      }
+    }
+
+    // --- Day Inclusion & Filtering ---
+
+    function tdEvaluateDayInclusion(rep) {
+      if (!rep) return { included: false, reason: "No report data found", offline_flag: false };
+      const summary = rep.summary || {};
+      const sessionCount = parseInt(summary.session_count || 0, 10);
+      const accountedSec = parseFloat(summary.total_accounted_seconds || 0.0);
+      const dq = rep.data_quality || {};
+      const watcherOffline = parseFloat(dq.watcher_offline_seconds || 0.0);
+      const collectorOffline = parseFloat(dq.collector_offline_seconds || 0.0);
+      const offlineFlag = (watcherOffline >= 60000.0 || collectorOffline >= 60000.0);
+
+      if (sessionCount === 0) {
+        return { included: false, reason: "No sessions recorded", offline_flag: offlineFlag };
+      }
+      if (accountedSec < 1800.0) {
+        return { included: false, reason: `Accounted time (${(accountedSec / 60).toFixed(0)}m) under 30m threshold`, offline_flag: offlineFlag };
+      }
+      return { included: true, reason: "OK", offline_flag: offlineFlag };
+    }
+
+    function tdGetDateRangeList(startStr, endStr) {
+      const dates = [];
+      if (!startStr || !endStr || startStr > endStr) return dates;
+      const cur = new Date(startStr + "T00:00:00");
+      const end = new Date(endStr + "T00:00:00");
+      while (cur <= end) {
+        dates.push(cur.toLocaleDateString("en-CA"));
+        cur.setDate(cur.getDate() + 1);
+      }
+      return dates;
+    }
+
+    function tdFilterIncludedDays(dateList, dayFilter) {
+      const included = [];
+      const excluded = [];
+      dateList.forEach(dStr => {
+        try {
+          const dt = new Date(dStr + "T00:00:00");
+          const dayOfWeek = dt.getDay(); // 0 is Sunday, 6 is Saturday
+          const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+          if (dayFilter === "weekdays" && isWeekend) return;
+          if (dayFilter === "weekends" && !isWeekend) return;
+        } catch (e) {}
+
+        const rep = REPORTS_DATABASE[dStr];
+        const res = tdEvaluateDayInclusion(rep);
+        if (res.included) {
+          included.push({ date: dStr, report: rep, offline_flag: res.offline_flag });
+        } else {
+          excluded.push({ date: dStr, reason: res.reason, offline_flag: res.offline_flag });
+        }
+      });
+      return { included, excluded };
+    }
+
+    // --- Precomputed Bin Arrays & Caching ---
+
+    function tdProjectIntervalToBins(startSec, durSec, binMin, axisStartHour) {
+      const totalBins = 1440 / binMin;
+      const binWidthSec = binMin * 60;
+      const axisStartSec = (axisStartHour * 3600) % 86400;
+      const overlaps = new Array(totalBins).fill(0.0);
+
+      if (durSec <= 0) return overlaps;
+
+      const sAxis = ((startSec - axisStartSec) % 86400 + 86400) % 86400;
+      const eAxis = sAxis + durSec;
+
+      const subIntervals = [];
+      if (eAxis <= 86400) {
+        subIntervals.push([sAxis, eAxis]);
+      } else {
+        subIntervals.push([sAxis, 86400]);
+        let rem = eAxis - 86400;
+        while (rem > 0) {
+          const chunk = Math.min(86400, rem);
+          subIntervals.push([0, chunk]);
+          rem -= chunk;
+        }
+      }
+
+      subIntervals.forEach(([subS, subE]) => {
+        const startBin = Math.floor(subS / binWidthSec);
+        const endBin = Math.min(totalBins - 1, Math.floor(subE / binWidthSec));
+        for (let b = startBin; b <= endBin; b++) {
+          const bS = b * binWidthSec;
+          const bE = (b + 1) * binWidthSec;
+          const ov = Math.max(0, Math.min(subE, bE) - Math.max(subS, bS));
+          if (ov > 0) overlaps[b] += ov;
+        }
+      });
+
+      return overlaps;
+    }
+
+    function tdGetOrComputeDayCache(dateStr) {
+      if (TYPICAL_DAY_CACHE[dateStr]) return TYPICAL_DAY_CACHE[dateStr];
+
+      const rep = REPORTS_DATABASE[dateStr] || {};
+      const totalBins = 96; // canonical 15-min bins anchored at 00:00
+      const binWidthSec = 900;
+
+      const screenSec = new Array(totalBins).fill(0.0);
+      const pcSec = new Array(totalBins).fill(0.0);
+      const mobileSec = new Array(totalBins).fill(0.0);
+      const labelSec = {};
+      const plannedLabelSec = {};
+      const unplannedLabelSec = {};
+      TYPICAL_DAY_ALLOWED_LABELS.forEach(lbl => {
+        labelSec[lbl] = new Array(totalBins).fill(0.0);
+        plannedLabelSec[lbl] = new Array(totalBins).fill(0.0);
+        unplannedLabelSec[lbl] = new Array(totalBins).fill(0.0);
+      });
+
+      const timeline = rep.timeline || [];
+      timeline.forEach(entry => {
+        const src = entry.source;
+        const sSec = tdTimeStrToSeconds(entry.start);
+        const dur = parseFloat(entry.duration_seconds || 0.0);
+        if (sSec === null || dur <= 0) return;
+
+        const overlaps = tdProjectIntervalToBins(sSec, dur, 15, 0);
+        const isScreen = (src === "browser" || src === "vscode" || src === "desktop" || src === "mobile");
+        const isPc = (src === "browser" || src === "vscode" || src === "desktop");
+        const isMob = (src === "mobile");
+
+        for (let b = 0; b < totalBins; b++) {
+          const ov = overlaps[b];
+          if (ov <= 0) continue;
+          if (isScreen) screenSec[b] += ov;
+          if (isPc) pcSec[b] += ov;
+          if (isMob) mobileSec[b] += ov;
+        }
+
+        // Project manual events with offline labels into labelSec bins
+        if (src === "manual" && entry.label && labelSec[entry.label]) {
+          for (let b = 0; b < totalBins; b++) {
+            const ov = overlaps[b];
+            if (ov > 0) {
+              labelSec[entry.label][b] += ov;
+            }
+          }
+        }
+      });
+
+      for (let b = 0; b < totalBins; b++) {
+        screenSec[b] = Math.min(binWidthSec, screenSec[b]);
+        pcSec[b] = Math.min(binWidthSec, pcSec[b]);
+        mobileSec[b] = Math.min(binWidthSec, mobileSec[b]);
+      }
+
+      // Label projection: prefer precise time-slice segments if present
+      const segments = rep.label_segments || rep.labels?.segments;
+      if (segments && segments.length > 0) {
+        segments.forEach(seg => {
+          const lbl = seg.label;
+          if (!lbl || !labelSec[lbl]) return;
+          const isPlanned = !!seg.planned;
+          const sSec = tdTimeStrToSeconds(seg.start);
+          const dur = parseFloat(seg.duration_seconds || 0.0);
+          if (sSec === null || dur <= 0) return;
+
+          const overlaps = tdProjectIntervalToBins(sSec, dur, 15, 0);
+          for (let b = 0; b < totalBins; b++) {
+            const ov = overlaps[b];
+            if (ov > 0) {
+              labelSec[lbl][b] += ov;
+              if (isPlanned) plannedLabelSec[lbl][b] += ov;
+              else unplannedLabelSec[lbl][b] += ov;
+            }
+          }
+        });
+      } else {
+        timeline.forEach(entry => {
+          const lbl = entry.label;
+          if (!lbl || !labelSec[lbl]) return;
+          const isPlanned = !!entry.planned;
+          const sSec = tdTimeStrToSeconds(entry.start);
+          const dur = parseFloat(entry.duration_seconds || 0.0);
+          if (sSec === null || dur <= 0) return;
+
+          const overlaps = tdProjectIntervalToBins(sSec, dur, 15, 0);
+          for (let b = 0; b < totalBins; b++) {
+            const ov = overlaps[b];
+            if (ov > 0) {
+              labelSec[lbl][b] += ov;
+              if (isPlanned) plannedLabelSec[lbl][b] += ov;
+              else unplannedLabelSec[lbl][b] += ov;
+            }
+          }
+        });
+      }
+
+      TYPICAL_DAY_ALLOWED_LABELS.forEach(lbl => {
+        for (let b = 0; b < totalBins; b++) {
+          labelSec[lbl][b] = Math.min(binWidthSec, labelSec[lbl][b]);
+          plannedLabelSec[lbl][b] = Math.min(binWidthSec, plannedLabelSec[lbl][b]);
+          unplannedLabelSec[lbl][b] = Math.min(binWidthSec, unplannedLabelSec[lbl][b]);
+        }
+      });
+
+      // Sleep projection
+      const sleepSec = new Array(totalBins).fill(0.0);
+      const sm = rep.daily_metrics?.sleep || {};
+      if (sm.status === "ok" && sm.bedtime && sm.wake_time) {
+        const bSec = tdTimeStrToSeconds(sm.bedtime);
+        const dur = parseFloat(sm.duration_seconds || 0.0);
+        if (bSec !== null && dur > 0) {
+          const sleepOv = tdProjectIntervalToBins(bSec, dur, 15, 0);
+          for (let b = 0; b < totalBins; b++) {
+            sleepSec[b] = Math.min(binWidthSec, sleepOv[b]);
+          }
+        }
+      }
+
+      const coveragePct = parseFloat(rep.label_coverage_pct ?? rep.labels?.label_coverage_pct ?? 0.0);
+
+      const cached = {
+        date: dateStr,
+        screen_seconds: screenSec,
+        pc_seconds: pcSec,
+        mobile_seconds: mobileSec,
+        sleep_seconds: sleepSec,
+        label_seconds: labelSec,
+        planned_label_seconds: plannedLabelSec,
+        unplanned_label_seconds: unplannedLabelSec,
+        coverage_pct: coveragePct,
+        sleep_metrics: sm
+      };
+      TYPICAL_DAY_CACHE[dateStr] = cached;
+      return cached;
+    }
+
+    // --- Range Aggregation with Axis Rotation ---
+
+    function tdRotateAndAggregate(includedDays, binMin, axisStartHour, devFilter, activeLabels) {
+      const targetBins = 1440 / binMin;
+      const binWidthSec = binMin * 60;
+      const nDays = includedDays.length;
+
+      if (nDays === 0) {
+        return {
+          n_days: 0,
+          targetBins,
+          binMin,
+          axisStartHour,
+          activity_pct: new Array(targetBins).fill(0),
+          activity_avg_min: new Array(targetBins).fill(0),
+          sleep_pct: new Array(targetBins).fill(0),
+          device_pc_pct: new Array(targetBins).fill(0),
+          device_phone_pct: new Array(targetBins).fill(0),
+          dominant_labels: new Array(targetBins).fill("unlabeled"),
+          dominant_avg_min: new Array(targetBins).fill(0),
+          coverage_pct: 0
+        };
+      }
+
+      const ratio = binMin / 15; // 1, 2, or 4
+      const shift15 = (axisStartHour * 4) % 96;
+
+      const daysWithActivity = new Array(targetBins).fill(0);
+      const totalActiveSec = new Array(targetBins).fill(0);
+      const totalPcSec = new Array(targetBins).fill(0);
+      const totalPhoneSec = new Array(targetBins).fill(0);
+      const daysAsleep = new Array(targetBins).fill(0);
+      const labelsSum = {};
+      TYPICAL_DAY_ALLOWED_LABELS.forEach(lbl => {
+        labelsSum[lbl] = new Array(targetBins).fill(0);
+      });
+
+      const bedtimes = [];
+      const wakeTimes = [];
+      const sleepDurations = [];
+      let manualSleepCount = 0;
+      let inferredSleepCount = 0;
+
+      includedDays.forEach(item => {
+        const d = tdGetOrComputeDayCache(item.date);
+
+        function rotateAndDownsample(arr96) {
+          const rot = arr96.slice(shift15).concat(arr96.slice(0, shift15));
+          if (ratio === 1) return rot;
+          const out = new Array(targetBins).fill(0);
+          for (let b = 0; b < targetBins; b++) {
+            let sum = 0;
+            for (let r = 0; r < ratio; r++) {
+              sum += rot[b * ratio + r] || 0;
+            }
+            out[b] = sum;
+          }
+          return out;
+        }
+
+        const dScreen = rotateAndDownsample(d.screen_seconds);
+        const dPc = rotateAndDownsample(d.pc_seconds);
+        const dMob = rotateAndDownsample(d.mobile_seconds);
+        const dSleep = rotateAndDownsample(d.sleep_seconds);
+
+        for (let b = 0; b < targetBins; b++) {
+          let actSec = dScreen[b];
+          if (devFilter === "pc") actSec = dPc[b];
+          else if (devFilter === "phone") actSec = dMob[b];
+
+          if (actSec >= 30.0) daysWithActivity[b]++;
+          totalActiveSec[b] += actSec;
+          totalPcSec[b] += dPc[b];
+          totalPhoneSec[b] += dMob[b];
+
+          if (dSleep[b] >= (binWidthSec * 0.4)) daysAsleep[b]++;
+
+          TYPICAL_DAY_ALLOWED_LABELS.forEach(lbl => {
+            const rotLbl = rotateAndDownsample(d.label_seconds[lbl]);
+            labelsSum[lbl][b] += rotLbl[b];
+          });
+        }
+
+        const sm = d.sleep_metrics || {};
+        if (sm.status === "ok") {
+          if (sm.source === "manual") manualSleepCount++;
+          else inferredSleepCount++;
+          const bSec = tdTimeStrToSeconds(sm.bedtime);
+          const wSec = tdTimeStrToSeconds(sm.wake_time);
+          if (bSec !== null) bedtimes.push(bSec);
+          if (wSec !== null) wakeTimes.push(wSec);
+          if (sm.duration_seconds) sleepDurations.push(parseFloat(sm.duration_seconds));
+        }
+      });
+
+      const activityPct = daysWithActivity.map(c => Math.round((c / nDays) * 1000) / 10);
+      const activityAvgMin = totalActiveSec.map(s => Math.round((s / nDays / 60) * 10) / 10);
+      const sleepPct = daysAsleep.map(c => Math.round((c / nDays) * 1000) / 10);
+
+      const devicePcPct = [];
+      const devicePhonePct = [];
+      for (let b = 0; b < targetBins; b++) {
+        const tot = totalPcSec[b] + totalPhoneSec[b];
+        if (tot > 0) {
+          devicePcPct.push(Math.round((totalPcSec[b] / tot) * 1000) / 10);
+          devicePhonePct.push(Math.round((totalPhoneSec[b] / tot) * 1000) / 10);
+        } else {
+          devicePcPct.push(0);
+          devicePhonePct.push(0);
+        }
+      }
+
+      const dominantLabels = [];
+      const dominantAvgMin = [];
+      let totalScreenAll = 0;
+      let totalLabeledAll = 0;
+      totalActiveSec.forEach(s => { totalScreenAll += s; });
+
+      for (let b = 0; b < targetBins; b++) {
+        let bestLbl = "unlabeled";
+        let bestSec = 0;
+        activeLabels.forEach(lbl => {
+          const s = labelsSum[lbl][b];
+          if (s > bestSec) {
+            bestSec = s;
+            bestLbl = lbl;
+          }
+        });
+        dominantLabels.push(bestLbl);
+        dominantAvgMin.push(Math.round((bestSec / nDays / 60) * 10) / 10);
+      }
+
+      TYPICAL_DAY_ALLOWED_LABELS.forEach(lbl => {
+        labelsSum[lbl].forEach(s => { totalLabeledAll += s; });
+      });
+
+      const coveragePct = totalScreenAll > 0 ? Math.round((totalLabeledAll / totalScreenAll) * 1000) / 10 : 0;
+
+      const bedtimeStats = tdCircularMedianAndIqr(bedtimes);
+      const wakeStats = tdCircularMedianAndIqr(wakeTimes);
+
+      // --- Focus vs Drift Layer Computation ---
+      const qualifiedDays = [];
+      const disqualifiedDays = [];
+      includedDays.forEach(item => {
+        const d = tdGetOrComputeDayCache(item.date);
+        if ((d.coverage_pct || 0) >= typicalDayFocusMinCoverage) {
+          qualifiedDays.push(item);
+        } else {
+          disqualifiedDays.push(item);
+        }
+      });
+
+      const nQual = qualifiedDays.length;
+      const totalFocusSec = new Array(targetBins).fill(0);
+      const totalDriftSec = new Array(targetBins).fill(0);
+      const totalNeutralSec = new Array(targetBins).fill(0);
+      const totalUnlabeledSec = new Array(targetBins).fill(0);
+
+      qualifiedDays.forEach(item => {
+        const d = tdGetOrComputeDayCache(item.date);
+        function rotateAndDownsample(arr96) {
+          if (!arr96) return new Array(targetBins).fill(0);
+          const rot = arr96.slice(shift15).concat(arr96.slice(0, shift15));
+          if (ratio === 1) return rot;
+          const out = new Array(targetBins).fill(0);
+          for (let b = 0; b < targetBins; b++) {
+            let sum = 0;
+            for (let r = 0; r < ratio; r++) sum += rot[b * ratio + r] || 0;
+            out[b] = sum;
+          }
+          return out;
+        }
+
+        const dScreen = rotateAndDownsample(d.screen_seconds);
+
+        // Focus: build, practice, learn
+        const fSec = new Array(targetBins).fill(0);
+        ["build", "practice", "learn"].forEach(wLbl => {
+          const arr = rotateAndDownsample(d.label_seconds?.[wLbl]);
+          for (let b = 0; b < targetBins; b++) fSec[b] += arr[b];
+        });
+
+        // Drift: leisure
+        const dSec = new Array(targetBins).fill(0);
+        if (typicalDayUnplannedOnly) {
+          const arr = rotateAndDownsample(d.unplanned_label_seconds?.["leisure"]);
+          for (let b = 0; b < targetBins; b++) dSec[b] += arr[b];
+        } else {
+          const arr = rotateAndDownsample(d.label_seconds?.["leisure"]);
+          for (let b = 0; b < targetBins; b++) dSec[b] += arr[b];
+        }
+
+        // Neutral: stay-current, career, comms, other, rest, eat, walk, social (+ planned leisure if unplannedOnly)
+        const neutSec = new Array(targetBins).fill(0);
+        ["stay-current", "career", "comms", "other", "rest", "eat", "walk", "social"].forEach(nLbl => {
+          const arr = rotateAndDownsample(d.label_seconds?.[nLbl]);
+          for (let b = 0; b < targetBins; b++) neutSec[b] += arr[b];
+        });
+        if (typicalDayUnplannedOnly) {
+          const arr = rotateAndDownsample(d.planned_label_seconds?.["leisure"]);
+          for (let b = 0; b < targetBins; b++) neutSec[b] += arr[b];
+        }
+
+        // Unlabeled
+        for (let b = 0; b < targetBins; b++) {
+          const labeled = fSec[b] + dSec[b] + neutSec[b];
+          const unlab = Math.max(0, dScreen[b] - labeled);
+          totalFocusSec[b] += fSec[b];
+          totalDriftSec[b] += dSec[b];
+          totalNeutralSec[b] += neutSec[b];
+          totalUnlabeledSec[b] += unlab;
+        }
+      });
+
+      const avgFocusMin = nQual > 0 ? totalFocusSec.map(s => Math.round((s / nQual / 60) * 10) / 10) : new Array(targetBins).fill(0);
+      const avgDriftMin = nQual > 0 ? totalDriftSec.map(s => Math.round((s / nQual / 60) * 10) / 10) : new Array(targetBins).fill(0);
+      const avgNeutralMin = nQual > 0 ? totalNeutralSec.map(s => Math.round((s / nQual / 60) * 10) / 10) : new Array(targetBins).fill(0);
+      const avgUnlabeledMin = nQual > 0 ? totalUnlabeledSec.map(s => Math.round((s / nQual / 60) * 10) / 10) : new Array(targetBins).fill(0);
+
+      const totFSec = totalFocusSec.reduce((a, b) => a + b, 0);
+      const totDSec = totalDriftSec.reduce((a, b) => a + b, 0);
+      const totNSec = totalNeutralSec.reduce((a, b) => a + b, 0);
+      const totUSec = totalUnlabeledSec.reduce((a, b) => a + b, 0);
+      const avgFocusHours = nQual > 0 ? Math.round((totFSec / nQual / 3600) * 10) / 10 : 0;
+      const avgDriftHours = nQual > 0 ? Math.round((totDSec / nQual / 3600) * 10) / 10 : 0;
+      const avgUnlabeledHours = nQual > 0 ? Math.round((totUSec / nQual / 3600) * 10) / 10 : 0;
+      const focusDriftCovPct = (totFSec + totDSec + totNSec + totUSec) > 0
+        ? Math.round(((totFSec + totDSec + totNSec) / (totFSec + totDSec + totNSec + totUSec)) * 1000) / 10
+        : 0;
+
+      const topFocusWindows = tdFindTopContiguousWindows(avgFocusMin, binMin, axisStartHour, 3, 1.0);
+      const topDriftWindows = tdFindTopContiguousWindows(avgDriftMin, binMin, axisStartHour, 3, 1.0);
+
+      return {
+        n_days: nDays,
+        targetBins,
+        binMin,
+        axisStartHour,
+        activity_pct: activityPct,
+        activity_avg_min: activityAvgMin,
+        sleep_pct: sleepPct,
+        manual_sleep_count: manualSleepCount,
+        inferred_sleep_count: inferredSleepCount,
+        median_bedtime: bedtimeStats.median,
+        median_wake: wakeStats.median,
+        bedtime_iqr: bedtimeStats.iqr,
+        wake_iqr: wakeStats.iqr,
+        avg_sleep_duration: sleepDurations.length ? (sleepDurations.reduce((a, b) => a + b, 0) / sleepDurations.length) : null,
+        device_pc_pct: devicePcPct,
+        device_phone_pct: devicePhonePct,
+        dominant_labels: dominantLabels,
+        dominant_avg_min: dominantAvgMin,
+        coverage_pct: coveragePct,
+        labels_sum: labelsSum,
+        n_qual: nQual,
+        total_qual_days: nQual,
+        avg_focus_min: avgFocusMin,
+        avg_drift_min: avgDriftMin,
+        avg_neutral_min: avgNeutralMin,
+        avg_unlabeled_min: avgUnlabeledMin,
+        avg_focus_hours: avgFocusHours,
+        avg_drift_hours: avgDriftHours,
+        avg_unlabeled_hours: avgUnlabeledHours,
+        focus_drift_cov_pct: focusDriftCovPct,
+        top_focus_windows: topFocusWindows,
+        top_drift_windows: topDriftWindows,
+      };
+    }
+
+    function tdFindTopContiguousWindows(binValues, binMin, axisStartHour, topK = 3, minWindowHours = 1.0, minRate = 5.0) {
+      const totalBins = binValues.length;
+      if (totalBins === 0) return [];
+      const minBins = Math.max(1, Math.round((minWindowHours * 60) / binMin));
+      const remainingValues = [...binValues];
+      const windows = [];
+
+      for (let w = 0; w < topK; w++) {
+        let bestAvg = -1;
+        let bestStart = -1;
+        let bestLen = -1;
+
+        for (let i = 0; i < totalBins; i++) {
+          let isValid = true;
+          let winSum = 0;
+          for (let j = 0; j < minBins; j++) {
+            const val = remainingValues[(i + j) % totalBins];
+            if (val < 0) {
+              isValid = false;
+              break;
+            }
+            winSum += val;
+          }
+          if (isValid) {
+            const avg = winSum / minWindowHours;
+            if (avg > bestAvg) {
+              bestAvg = avg;
+              bestStart = i;
+              bestLen = minBins;
+            }
+          }
+        }
+
+        if (bestStart === -1 || bestAvg < minRate) break;
+
+        let curStart = bestStart;
+        let curLen = bestLen;
+        const threshold = Math.max(2.0, bestAvg * (binMin / 60) * 0.3);
+
+        while (curLen < totalBins) {
+          const nextIdx = (curStart + curLen) % totalBins;
+          if (remainingValues[nextIdx] >= threshold) {
+            curLen++;
+          } else {
+            break;
+          }
+        }
+
+        while (curLen < totalBins) {
+          const prevIdx = (curStart - 1 + totalBins) % totalBins;
+          if (remainingValues[prevIdx] >= threshold) {
+            curStart = prevIdx;
+            curLen++;
+          } else {
+            break;
+          }
+        }
+
+        let totMins = 0;
+        for (let j = 0; j < curLen; j++) {
+          totMins += binValues[(curStart + j) % totalBins];
+        }
+        const durHours = Math.round((curLen * binMin / 60) * 10) / 10;
+        const avgRate = durHours > 0 ? Math.round((totMins / durHours) * 10) / 10 : 0;
+
+        const startSec = ((axisStartHour * 3600) + (curStart * binMin * 60)) % 86400;
+        const endSec = ((axisStartHour * 3600) + ((curStart + curLen) * binMin * 60)) % 86400;
+        const startStr = tdSecondsToTimeStr(startSec);
+        const endStr = tdSecondsToTimeStr(endSec);
+        const disp = `${startStr} - ${endStr} (${Math.round(avgRate)}m/h)`;
+
+        windows.push({
+          start_time: startStr,
+          end_time: endStr,
+          duration_hours: durHours,
+          avg_minutes_per_hour: avgRate,
+          total_minutes: Math.round(totMins * 10) / 10,
+          display: disp
+        });
+
+        for (let j = 0; j < curLen; j++) {
+          remainingValues[(curStart + j) % totalBins] = -1.0;
+        }
+      }
+
+      return windows;
+    }
+
+    function tdComputeDifferenceStrip(aggA, aggB, layer) {
+      const targetBins = aggA.targetBins || 96;
+      const diff = new Array(targetBins).fill(0.0);
+      if (aggA.n_days === 0 || aggB.n_days === 0) return diff;
+
+      for (let b = 0; b < targetBins; b++) {
+        if (layer === "activity") {
+          diff[b] = Math.round((aggB.activity_pct[b] - aggA.activity_pct[b]) * 10) / 10;
+        } else if (layer === "sleep") {
+          diff[b] = Math.round((aggB.sleep_pct[b] - aggA.sleep_pct[b]) * 10) / 10;
+        } else if (layer === "device") {
+          diff[b] = Math.round((aggB.device_phone_pct[b] - aggA.device_phone_pct[b]) * 10) / 10;
+        } else if (layer === "label") {
+          diff[b] = Math.round((aggB.dominant_avg_min[b] - aggA.dominant_avg_min[b]) * 10) / 10;
+        }
+      }
+      return diff;
+    }
+
+    function tdFindPeak1hWindow(binValues, binMin, axisStartHour) {
+      const binsPerHour = Math.max(1, Math.round(60 / binMin));
+      const totalBins = binValues.length;
+      let bestSum = -1;
+      let bestStartBin = 0;
+
+      for (let i = 0; i < totalBins; i++) {
+        let winSum = 0;
+        for (let j = 0; j < binsPerHour; j++) {
+          const idx = (i + j) % totalBins;
+          winSum += binValues[idx] || 0;
+        }
+        if (winSum > bestSum) {
+          bestSum = winSum;
+          bestStartBin = i;
+        }
+      }
+
+      const startSec = ((axisStartHour * 3600) + (bestStartBin * binMin * 60)) % 86400;
+      const endSec = (startSec + 3600) % 86400;
+      return `${tdSecondsToTimeStr(startSec)} - ${tdSecondsToTimeStr(endSec)}`;
+    }
+
+    function tdComputeComparisonMetrics(includedA, includedB, aggA, aggB, binMin, axisStartHour) {
+      function extractRangeStats(included, agg) {
+        if (!included || included.length === 0 || agg.n_days === 0) return {};
+
+        const firstActs = [];
+        const lastActs = [];
+        const activeHours = [];
+        const phoneShares = [];
+        const lateNightMins = [];
+
+        included.forEach(item => {
+          const rep = item.report || {};
+          const dm = rep.daily_metrics || {};
+          const summ = rep.summary || {};
+
+          const fa = tdTimeStrToSeconds(dm.first_activity || summ.first_activity);
+          if (fa !== null) firstActs.push(fa);
+          const la = tdTimeStrToSeconds(dm.last_activity || summ.last_activity);
+          if (la !== null) lastActs.push(la);
+
+          const actSec = parseFloat(summ.total_active_seconds || 0.0);
+          activeHours.push(actSec / 3600);
+
+          const pcS = parseFloat(summ.pc_active_seconds || 0.0);
+          const mobS = parseFloat(summ.mobile_seconds || 0.0);
+          if (pcS + mobS > 0) phoneShares.push((mobS / (pcS + mobS)) * 100);
+
+          lateNightMins.push(parseFloat(dm.late_night_screen_seconds || 0.0) / 60);
+        });
+
+        const faStats = tdCircularMedianAndIqr(firstActs);
+        const laStats = tdCircularMedianAndIqr(lastActs);
+
+        // Peak windows
+        const peakAct = tdFindPeak1hWindow(agg.activity_avg_min, binMin, axisStartHour);
+
+        // Work: build + practice + learn
+        const targetBins = agg.targetBins;
+        const workMins = new Array(targetBins).fill(0);
+        if (agg.labels_sum) {
+          ["build", "practice", "learn"].forEach(wLbl => {
+            const arr = agg.labels_sum[wLbl] || [];
+            for (let b = 0; b < targetBins; b++) {
+              workMins[b] += (arr[b] / agg.n_days / 60);
+            }
+          });
+        }
+        const peakWork = tdFindPeak1hWindow(workMins, binMin, axisStartHour);
+
+        // Leisure
+        const leisureMins = new Array(targetBins).fill(0);
+        if (agg.labels_sum && agg.labels_sum["leisure"]) {
+          const arr = agg.labels_sum["leisure"];
+          for (let b = 0; b < targetBins; b++) {
+            leisureMins[b] += (arr[b] / agg.n_days / 60);
+          }
+        }
+        const peakLeisure = tdFindPeak1hWindow(leisureMins, binMin, axisStartHour);
+
+        return {
+          n_days: agg.n_days,
+          median_bedtime: agg.median_bedtime,
+          median_wake: agg.median_wake,
+          avg_sleep_duration: agg.avg_sleep_duration,
+          bedtime_iqr: agg.bedtime_iqr,
+          avg_first_activity: faStats.median,
+          avg_last_activity: laStats.median,
+          avg_active_hours: activeHours.length ? (activeHours.reduce((a, b) => a + b, 0) / activeHours.length) : 0,
+          phone_share: phoneShares.length ? (phoneShares.reduce((a, b) => a + b, 0) / phoneShares.length) : 0,
+          peak_activity_window: peakAct,
+          peak_work_window: peakWork,
+          peak_leisure_window: peakLeisure,
+          avg_late_night_mins: lateNightMins.length ? (lateNightMins.reduce((a, b) => a + b, 0) / lateNightMins.length) : 0
+        };
+      }
+
+      const statsA = extractRangeStats(includedA, aggA);
+      const statsB = (includedB && aggB) ? extractRangeStats(includedB, aggB) : null;
+
+      const rows = [
+        { label: "Median Bedtime", key: "median_bedtime", isTime: true },
+        { label: "Median Wake Time", key: "median_wake", isTime: true },
+        { label: "Avg Sleep Duration", key: "avg_sleep_duration", isDur: true },
+        { label: "Bedtime Regularity (IQR)", key: "bedtime_iqr", isDur: true },
+        { label: "Avg First Activity", key: "avg_first_activity", isTime: true },
+        { label: "Avg Last Activity", key: "avg_last_activity", isTime: true },
+        { label: "Avg Active Hours", key: "avg_active_hours", unit: "h" },
+        { label: "Phone Share", key: "phone_share", isPct: true },
+        { label: "Peak Activity Window", key: "peak_activity_window" },
+        { label: "Peak Work Window", key: "peak_work_window" },
+        { label: "Peak Leisure Window", key: "peak_leisure_window" },
+        { label: "Avg Late-Night Screen", key: "avg_late_night_mins", unit: "m" },
+      ];
+
+      return { statsA, statsB, rows };
+    }
+
+    // --- Main Rendering Dispatcher ---
+
+    function renderTypicalDayView() {
+      // 1. Ensure initial range values
+      if (!typicalDayRangeA.start || !typicalDayRangeA.end) {
+        const refD = currentDate || localToday;
+        const eD = new Date(refD + "T00:00:00");
+        const sD = new Date(eD);
+        sD.setDate(sD.getDate() - 6);
+        typicalDayRangeA = { start: sD.toLocaleDateString("en-CA"), end: eD.toLocaleDateString("en-CA") };
+        const aStartIn = document.getElementById("td-range-a-start");
+        const aEndIn = document.getElementById("td-range-a-end");
+        if (aStartIn) aStartIn.value = typicalDayRangeA.start;
+        if (aEndIn) aEndIn.value = typicalDayRangeA.end;
+      }
+
+      // 2. Filter days
+      const datesA = tdGetDateRangeList(typicalDayRangeA.start, typicalDayRangeA.end);
+      const filteredA = tdFilterIncludedDays(datesA, typicalDayDayFilter);
+
+      let filteredB = { included: [], excluded: [] };
+      if (typicalDayEnableRangeB && typicalDayRangeB.start && typicalDayRangeB.end) {
+        const datesB = tdGetDateRangeList(typicalDayRangeB.start, typicalDayRangeB.end);
+        filteredB = tdFilterIncludedDays(datesB, typicalDayDayFilter);
+      }
+
+      // 3. Render Status Banners
+      const statusContainer = document.getElementById("td-status-container");
+      const badgeA = document.getElementById("td-badge-range-a");
+      if (badgeA) {
+        badgeA.textContent = `${filteredA.included.length} days included, ${filteredA.excluded.length} excluded`;
+      }
+
+      const badgeB = document.getElementById("td-badge-range-b");
+      if (badgeB && typicalDayEnableRangeB) {
+        badgeB.textContent = `${filteredB.included.length} days included, ${filteredB.excluded.length} excluded`;
+      }
+
+      if (statusContainer) {
+        statusContainer.innerHTML = "";
+
+        // Warnings for < 5 days
+        if (filteredA.included.length < 5) {
+          const warnA = document.createElement("div");
+          warnA.className = "p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center gap-2";
+          warnA.innerHTML = `
+            <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            <span><strong>Fewer than 5 included days (${filteredA.included.length}/5) in Range A:</strong> Showing raw intervals; average statistical metrics are suppressed to avoid distortion.</span>
+          `;
+          statusContainer.appendChild(warnA);
+        }
+
+        if (typicalDayEnableRangeB && filteredB.included.length < 5) {
+          const warnB = document.createElement("div");
+          warnB.className = "p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-center gap-2";
+          warnB.innerHTML = `
+            <svg class="w-4 h-4 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+            <span><strong>Fewer than 5 included days (${filteredB.included.length}/5) in Range B:</strong> Comparison averages are suppressed.</span>
+          `;
+          statusContainer.appendChild(warnB);
+        }
+
+        // Offline flags notice
+        const offlineA = filteredA.included.filter(x => x.offline_flag).length;
+        const offlineB = filteredB.included.filter(x => x.offline_flag).length;
+        if (offlineA > 0 || offlineB > 0) {
+          const offWarn = document.createElement("div");
+          offWarn.className = "p-2 rounded bg-white/[0.03] border border-white/[0.08] text-[11px] text-slate-400 flex items-center gap-2";
+          offWarn.innerHTML = `
+            <span class="w-2 h-2 rounded-full bg-orange-400"></span>
+            <span><strong>Data Quality Notice:</strong> ${offlineA + offlineB} day(s) had prolonged collector/watcher offline intervals.</span>
+          `;
+          statusContainer.appendChild(offWarn);
+        }
+      }
+
+      // 4. Aggregate Bins
+      const aggA = tdRotateAndAggregate(
+        filteredA.included,
+        typicalDayBinMinutes,
+        typicalDayAxisStartHour,
+        typicalDayDeviceFilter,
+        typicalDaySelectedLabels
+      );
+
+      const aggB = typicalDayEnableRangeB
+        ? tdRotateAndAggregate(
+            filteredB.included,
+            typicalDayBinMinutes,
+            typicalDayAxisStartHour,
+            typicalDayDeviceFilter,
+            typicalDaySelectedLabels
+          )
+        : null;
+
+      // 5. Update Header & Legend
+      const layerTitle = document.getElementById("td-current-layer-title");
+      const layerDesc = document.getElementById("td-layer-description");
+      const legendContainer = document.getElementById("td-strips-legend");
+
+      if (layerTitle && layerDesc) {
+        if (typicalDayCurrentLayer === "activity") {
+          layerTitle.textContent = "Activity Intensity";
+          layerDesc.textContent = "(% of included days with screen activity)";
+        } else if (typicalDayCurrentLayer === "sleep") {
+          layerTitle.textContent = "Sleep & Night Schedule";
+          const mCount = aggA.manual_sleep_count + (aggB ? aggB.manual_sleep_count : 0);
+          const iCount = aggA.inferred_sleep_count + (aggB ? aggB.inferred_sleep_count : 0);
+          layerDesc.textContent = `(% nights asleep • ${mCount} manual, ${iCount} inferred)`;
+        } else if (typicalDayCurrentLayer === "device") {
+          layerTitle.textContent = "Device Split";
+          layerDesc.textContent = "(PC share vs Phone share per bin)";
+        } else if (typicalDayCurrentLayer === "label") {
+          layerTitle.textContent = "Dominant Behavioral Labels";
+          layerDesc.textContent = `(Coverage: ${aggA.coverage_pct}% ${aggA.coverage_pct < 70 ? "⚠️ <70%" : "✓"})`;
+        }
+      }
+
+      if (legendContainer) {
+        legendContainer.innerHTML = "";
+        if (typicalDayCurrentLayer === "activity") {
+          legendContainer.innerHTML = `
+            <span class="text-slate-500">0%</span>
+            <div class="flex h-2.5 w-24 rounded overflow-hidden">
+              <span class="flex-1 bg-white/[0.04]"></span>
+              <span class="flex-1 bg-indigo-500/25"></span>
+              <span class="flex-1 bg-indigo-500/50"></span>
+              <span class="flex-1 bg-indigo-500/80"></span>
+              <span class="flex-1 bg-indigo-400"></span>
+            </div>
+            <span class="text-slate-500">100%</span>
+          `;
+        } else if (typicalDayCurrentLayer === "sleep") {
+          legendContainer.innerHTML = `
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded bg-indigo-500/50"></span> Asleep</span>
+            <span class="flex items-center gap-1.5"><span class="w-1.5 h-3 rounded-full bg-cyan-400"></span> Median Bedtime / Wake</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-2.5 rounded bg-cyan-500/20 border border-cyan-400/40"></span> IQR Band</span>
+          `;
+        } else if (typicalDayCurrentLayer === "device") {
+          legendContainer.innerHTML = `
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded bg-indigo-500"></span> PC</span>
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded bg-pink-500"></span> Phone</span>
+          `;
+        } else if (typicalDayCurrentLayer === "label") {
+          legendContainer.innerHTML = `
+            ${TYPICAL_DAY_ALLOWED_LABELS.slice(0, 5).map(lbl => `
+              <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full" style="background-color: ${TYPICAL_DAY_LABEL_COLORS[lbl]}"></span>${lbl}</span>
+            `).join("")}
+          `;
+        }
+      }
+
+      // 6. Render Horizontal Strips
+      renderTypicalDayStrips(aggA, aggB);
+
+      // 7. Render Comparison Table
+      renderTypicalDayTable(filteredA.included, filteredB.included, aggA, aggB);
+    }
+
+    function renderTypicalDayStrips(aggA, aggB) {
+      const container = document.getElementById("td-strips-view");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const totalBins = aggA.targetBins;
+      const binMin = aggA.binMin;
+      const axisStart = aggA.axisStartHour;
+
+      // Axis Ruler (Ticks every 2 or 3 hours)
+      const ruler = document.createElement("div");
+      ruler.className = "flex items-center text-[10px] text-slate-500 font-mono border-b border-white/[0.08] pb-1";
+      const stepHours = (binMin === 60) ? 2 : 3;
+      const totalSteps = 24 / stepHours;
+
+      for (let s = 0; s <= totalSteps; s++) {
+        const h = (axisStart + s * stepHours) % 24;
+        const mark = document.createElement("div");
+        mark.className = "flex-1 text-left first:text-left last:text-right";
+        mark.textContent = `${String(h).padStart(2, "0")}:00`;
+        ruler.appendChild(mark);
+      }
+      container.appendChild(ruler);
+
+      // Helper to render one full-width strip
+      function createStripRow(title, labelColor, aggData, isDiff = false) {
+        const wrap = document.createElement("div");
+        wrap.className = "space-y-1.5";
+
+        const rowHeader = document.createElement("div");
+        rowHeader.className = "flex items-center justify-between text-xs";
+        rowHeader.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full" style="background-color: ${labelColor}"></span>
+            <span class="font-medium text-slate-200">${title}</span>
+            <span class="text-[11px] text-slate-500 font-mono">(${aggData.n_days} days)</span>
+          </div>
+        `;
+        wrap.appendChild(rowHeader);
+
+        // Cells container
+        const track = document.createElement("div");
+        track.className = "relative flex items-center h-8 rounded-lg overflow-hidden bg-black/40 border border-white/[0.08] p-0.5 gap-px select-none";
+
+        for (let b = 0; b < totalBins; b++) {
+          const binStartSec = ((axisStart * 3600) + (b * binMin * 60)) % 86400;
+          const binEndSec = (binStartSec + binMin * 60) % 86400;
+          const timeLabel = `${tdSecondsToTimeStr(binStartSec)} - ${tdSecondsToTimeStr(binEndSec)}`;
+
+          const cell = document.createElement("div");
+          cell.className = "flex-1 h-full rounded-sm transition-all duration-75 relative group cursor-pointer";
+
+          let tooltipText = "";
+
+          if (isDiff) {
+            // Difference strip
+            const diffVal = aggData.diff[b] || 0.0;
+            if (diffVal > 0) {
+              const op = Math.min(1.0, 0.2 + (diffVal / 100) * 0.8);
+              cell.style.backgroundColor = `rgba(16, 185, 129, ${op})`; // Emerald
+            } else if (diffVal < 0) {
+              const op = Math.min(1.0, 0.2 + (Math.abs(diffVal) / 100) * 0.8);
+              cell.style.backgroundColor = `rgba(244, 63, 94, ${op})`; // Rose
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+            }
+            tooltipText = `<strong>${timeLabel}</strong><br>Difference (B &minus; A): <strong>${diffVal > 0 ? "+" : ""}${diffVal}%</strong>`;
+          } else if (typicalDayCurrentLayer === "activity") {
+            const pct = aggData.activity_pct[b] || 0;
+            const avgM = aggData.activity_avg_min[b] || 0;
+            if (pct > 0) {
+              const alpha = Math.min(1.0, 0.15 + (pct / 100) * 0.85);
+              cell.style.backgroundColor = `rgba(99, 102, 241, ${alpha})`;
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+            }
+            tooltipText = `<strong>${timeLabel}</strong><br>Active Days: <strong>${pct}%</strong> (${aggData.n_days} days)<br>Avg active: <strong>${avgM}m</strong>`;
+          } else if (typicalDayCurrentLayer === "sleep") {
+            const sPct = aggData.sleep_pct[b] || 0;
+            if (sPct > 0) {
+              const alpha = Math.min(1.0, 0.2 + (sPct / 100) * 0.8);
+              cell.style.backgroundColor = `rgba(99, 102, 241, ${alpha})`;
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+            }
+            tooltipText = `<strong>${timeLabel}</strong><br>Asleep in bin: <strong>${sPct}%</strong> of nights`;
+          } else if (typicalDayCurrentLayer === "device") {
+            const pcP = aggData.device_pc_pct[b] || 0;
+            const phP = aggData.device_phone_pct[b] || 0;
+            if (pcP > 0 || phP > 0) {
+              cell.style.background = `linear-gradient(to top, #ec4899 ${phP}%, #6366f1 ${phP}%)`;
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+            }
+            tooltipText = `<strong>${timeLabel}</strong><br>PC: <strong>${pcP}%</strong> • Phone: <strong>${phP}%</strong>`;
+          } else if (typicalDayCurrentLayer === "label") {
+            const domLbl = aggData.dominant_labels[b] || "unlabeled";
+            const avgM = aggData.dominant_avg_min[b] || 0;
+            const color = TYPICAL_DAY_LABEL_COLORS[domLbl] || "#334155";
+            if (domLbl !== "unlabeled" && avgM > 0) {
+              cell.style.backgroundColor = color;
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+            }
+            tooltipText = `<strong>${timeLabel}</strong><br>Dominant Label: <strong>${domLbl}</strong><br>Avg duration: <strong>${avgM}m</strong>`;
+          }
+
+          cell.onmouseenter = (e) => {
+            showToast(tooltipText.replace(/<[^>]*>?/gm, " "));
+          };
+
+          track.appendChild(cell);
+        }
+
+        // Overlay Sleep markers if Sleep layer active and median is available
+        if (typicalDayCurrentLayer === "sleep" && !isDiff && aggData.median_bedtime !== null && aggData.median_wake !== null) {
+          const axisStartSec = (axisStart * 3600) % 86400;
+
+          function secToTrackPct(sec) {
+            const relSec = ((sec - axisStartSec) % 86400 + 86400) % 86400;
+            return (relSec / 86400) * 100;
+          }
+
+          const bedPct = secToTrackPct(aggData.median_bedtime);
+          const wakePct = secToTrackPct(aggData.median_wake);
+
+          // Bedtime marker
+          const bMarker = document.createElement("div");
+          bMarker.className = "absolute top-0 bottom-0 w-0.5 bg-cyan-400 z-10 pointer-events-none shadow-[0_0_8px_rgba(6,182,212,0.8)]";
+          bMarker.style.left = `${bedPct}%`;
+          track.appendChild(bMarker);
+
+          // Wake marker
+          const wMarker = document.createElement("div");
+          wMarker.className = "absolute top-0 bottom-0 w-0.5 bg-emerald-400 z-10 pointer-events-none shadow-[0_0_8px_rgba(52,211,153,0.8)]";
+          wMarker.style.left = `${wakePct}%`;
+          track.appendChild(wMarker);
+        }
+
+        wrap.appendChild(track);
+        return wrap;
+      }
+
+      // --- Focus vs Drift Layer Rendering ---
+      if (typicalDayCurrentLayer === "focus_drift") {
+        if (aggA.n_qual === 0) {
+          const empty = document.createElement("div");
+          empty.className = "p-8 text-center bg-white/[0.02] border border-white/[0.08] rounded-xl space-y-2";
+          empty.innerHTML = `
+            <div class="text-sm font-medium text-slate-300">No Days Qualified for Focus vs Drift</div>
+            <div class="text-xs text-slate-500">None of the ${aggA.n_days} included days meet the ${typicalDayFocusMinCoverage}% label coverage threshold. Lower the threshold or add labels to daily analysis journals.</div>
+          `;
+          container.appendChild(empty);
+          return;
+        }
+
+        function createFocusDriftRow(title, labelColor, subtitle, cellRenderer) {
+          const wrap = document.createElement("div");
+          wrap.className = "space-y-1.5";
+
+          const rowHeader = document.createElement("div");
+          rowHeader.className = "flex items-center justify-between text-xs";
+          rowHeader.innerHTML = `
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full" style="background-color: ${labelColor}"></span>
+              <span class="font-medium text-slate-200">${title}</span>
+              <span class="text-[11px] text-slate-500 font-mono">${subtitle}</span>
+            </div>
+          `;
+          wrap.appendChild(rowHeader);
+
+          const track = document.createElement("div");
+          track.className = "relative flex items-center h-8 rounded-lg overflow-hidden bg-black/40 border border-white/[0.08] p-0.5 gap-px select-none";
+
+          for (let b = 0; b < totalBins; b++) {
+            const binStartSec = ((axisStart * 3600) + (b * binMin * 60)) % 86400;
+            const binEndSec = (binStartSec + binMin * 60) % 86400;
+            const timeLabel = `${tdSecondsToTimeStr(binStartSec)} - ${tdSecondsToTimeStr(binEndSec)}`;
+
+            const cell = document.createElement("div");
+            cell.className = "flex-1 h-full rounded-sm transition-all duration-75 relative group cursor-pointer overflow-hidden";
+            cellRenderer(cell, b, timeLabel);
+            track.appendChild(cell);
+          }
+          wrap.appendChild(track);
+          return wrap;
+        }
+
+        // 1. Range A - Focus
+        container.appendChild(createFocusDriftRow(
+          "Range A — Focus",
+          "#10b981",
+          `(${aggA.n_qual}d qualified • avg ${aggA.avg_focus_hours}h/day)`,
+          (cell, b, timeLabel) => {
+            const fMin = aggA.avg_focus_min[b] || 0;
+            if (fMin > 0) {
+              const alpha = Math.min(1.0, 0.15 + (fMin / binMin) * 0.85);
+              cell.style.backgroundColor = `rgba(16, 185, 129, ${alpha})`;
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+            }
+            const tip = `<strong>${timeLabel}</strong><br>Avg Focus: <strong>${fMin}m</strong> (${(fMin / binMin * 100).toFixed(0)}% of bin)<br>Categories: build, practice, learn`;
+            cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
+          }
+        ));
+
+        // 2. Range A - Drift & Unlabeled
+        container.appendChild(createFocusDriftRow(
+          "Range A — Drift & Unlabeled",
+          "#f43f5e",
+          `(avg ${aggA.avg_drift_hours}h drift • ${aggA.avg_unlabeled_hours}h unlabeled)`,
+          (cell, b, timeLabel) => {
+            const dMin = aggA.avg_drift_min[b] || 0;
+            const uMin = aggA.avg_unlabeled_min[b] || 0;
+            const nMin = aggA.avg_neutral_min[b] || 0;
+
+            const dPct = Math.min(100, (dMin / binMin) * 100);
+            const uPct = Math.min(100 - dPct, (uMin / binMin) * 100);
+
+            if (dPct > 0 || uPct > 0) {
+              cell.style.background = `linear-gradient(to top, #f43f5e 0%, #f43f5e ${dPct}%, #475569 ${dPct}%, #475569 ${dPct + uPct}%, transparent ${dPct + uPct}%)`;
+            } else {
+              cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+            }
+            const tip = `<strong>${timeLabel}</strong><br>Avg Drift: <strong>${dMin}m</strong> (${typicalDayUnplannedOnly ? "unplanned leisure" : "all leisure"})<br>Neutral: <strong>${nMin}m</strong><br>Unlabeled (unknown): <strong>${uMin}m</strong>`;
+            cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
+          }
+        ));
+
+        // Range B if enabled
+        if (typicalDayEnableRangeB && aggB && aggB.n_qual > 0) {
+          // 3. Range B - Focus
+          container.appendChild(createFocusDriftRow(
+            "Range B — Focus",
+            "#10b981",
+            `(${aggB.n_qual}d qualified • avg ${aggB.avg_focus_hours}h/day)`,
+            (cell, b, timeLabel) => {
+              const fMin = aggB.avg_focus_min[b] || 0;
+              if (fMin > 0) {
+                const alpha = Math.min(1.0, 0.15 + (fMin / binMin) * 0.85);
+                cell.style.backgroundColor = `rgba(16, 185, 129, ${alpha})`;
+              } else {
+                cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+              }
+              const tip = `<strong>${timeLabel}</strong><br>Avg Focus: <strong>${fMin}m</strong> (${(fMin / binMin * 100).toFixed(0)}% of bin)`;
+              cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
+            }
+          ));
+
+          // 4. Range B - Drift & Unlabeled
+          container.appendChild(createFocusDriftRow(
+            "Range B — Drift & Unlabeled",
+            "#f43f5e",
+            `(avg ${aggB.avg_drift_hours}h drift • ${aggB.avg_unlabeled_hours}h unlabeled)`,
+            (cell, b, timeLabel) => {
+              const dMin = aggB.avg_drift_min[b] || 0;
+              const uMin = aggB.avg_unlabeled_min[b] || 0;
+              const nMin = aggB.avg_neutral_min[b] || 0;
+
+              const dPct = Math.min(100, (dMin / binMin) * 100);
+              const uPct = Math.min(100 - dPct, (uMin / binMin) * 100);
+
+              if (dPct > 0 || uPct > 0) {
+                cell.style.background = `linear-gradient(to top, #f43f5e 0%, #f43f5e ${dPct}%, #475569 ${dPct}%, #475569 ${dPct + uPct}%, transparent ${dPct + uPct}%)`;
+              } else {
+                cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
+              }
+              const tip = `<strong>${timeLabel}</strong><br>Avg Drift: <strong>${dMin}m</strong><br>Neutral: <strong>${nMin}m</strong><br>Unlabeled: <strong>${uMin}m</strong>`;
+              cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
+            }
+          ));
+
+          // 5. Delta Focus Strip (B minus A)
+          container.appendChild(createFocusDriftRow(
+            "Difference (B &minus; A) — Focus",
+            "#06b6d4",
+            "(&plus; more focus in B, &minus; less focus in B)",
+            (cell, b, timeLabel) => {
+              const diffF = Math.round((aggB.avg_focus_min[b] - aggA.avg_focus_min[b]) * 10) / 10;
+              if (diffF > 0) {
+                const op = Math.min(1.0, 0.2 + (diffF / binMin) * 0.8);
+                cell.style.backgroundColor = `rgba(16, 185, 129, ${op})`;
+              } else if (diffF < 0) {
+                const op = Math.min(1.0, 0.2 + (Math.abs(diffF) / binMin) * 0.8);
+                cell.style.backgroundColor = `rgba(244, 63, 94, ${op})`;
+              } else {
+                cell.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+              }
+              const tip = `<strong>${timeLabel}</strong><br>Focus Delta (B &minus; A): <strong>${diffF > 0 ? "+" : ""}${diffF}m</strong>`;
+              cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
+            }
+          ));
+
+          // 6. Delta Drift Strip (B minus A)
+          container.appendChild(createFocusDriftRow(
+            "Difference (B &minus; A) — Drift",
+            "#f59e0b",
+            "(&plus; more drift in B, &minus; less drift in B)",
+            (cell, b, timeLabel) => {
+              const diffD = Math.round((aggB.avg_drift_min[b] - aggA.avg_drift_min[b]) * 10) / 10;
+              if (diffD > 0) {
+                const op = Math.min(1.0, 0.2 + (diffD / binMin) * 0.8);
+                cell.style.backgroundColor = `rgba(244, 63, 94, ${op})`; // More drift = rose
+              } else if (diffD < 0) {
+                const op = Math.min(1.0, 0.2 + (Math.abs(diffD) / binMin) * 0.8);
+                cell.style.backgroundColor = `rgba(16, 185, 129, ${op})`; // Less drift = emerald
+              } else {
+                cell.style.backgroundColor = "rgba(255, 255, 255, 0.03)";
+              }
+              const tip = `<strong>${timeLabel}</strong><br>Drift Delta (B &minus; A): <strong>${diffD > 0 ? "+" : ""}${diffD}m</strong>`;
+              cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
+            }
+          ));
+        }
+
+        return;
+      }
+
+      // 1. Strip Range A
+      container.appendChild(createStripRow("Range A", "#6366f1", aggA));
+
+      // 2. Strip Range B (if enabled)
+      if (typicalDayEnableRangeB && aggB) {
+        container.appendChild(createStripRow("Range B", "#10b981", aggB));
+
+        // 3. Difference Strip (B minus A)
+        const diffValues = tdComputeDifferenceStrip(aggA, aggB, typicalDayCurrentLayer);
+        const diffData = { n_days: `${aggB.n_days} vs ${aggA.n_days}`, diff: diffValues };
+        container.appendChild(createStripRow("Difference (Range B &minus; Range A)", "#f59e0b", diffData, true));
+      }
+    }
+
+    function renderTypicalDayTable(includedA, includedB, aggA, aggB) {
+      const container = document.getElementById("td-comparison-table-wrapper");
+      if (!container) return;
+      container.innerHTML = "";
+
+      const showB = (typicalDayEnableRangeB && aggB);
+
+      // Dedicated Focus vs Drift Summary Table
+      if (typicalDayCurrentLayer === "focus_drift") {
+        const table = document.createElement("table");
+        table.className = "w-full text-left text-xs font-mono border-collapse";
+        table.innerHTML = `
+          <thead>
+            <tr class="border-b border-[var(--border)] text-slate-400 text-[11px]">
+              <th class="py-2 px-3 font-medium">Metric</th>
+              <th class="py-2 px-3 font-medium text-slate-300">Range A (${aggA.n_qual} qualified)</th>
+              ${showB ? `<th class="py-2 px-3 font-medium text-emerald-400">Range B (${aggB.n_qual} qualified)</th>` : ""}
+              ${showB ? `<th class="py-2 px-3 font-medium text-indigo-400">Delta (B &minus; A)</th>` : ""}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/[0.04]">
+          </tbody>
+        `;
+        const tbody = table.querySelector("tbody");
+
+        const rows = [];
+        // 1. Qualified Days
+        rows.push({
+          label: "Qualified Days",
+          dispA: `${aggA.n_qual} of ${aggA.n_days} (${aggA.n_days > 0 ? Math.round(aggA.n_qual / aggA.n_days * 100) : 0}%)`,
+          dispB: showB ? `${aggB.n_qual} of ${aggB.n_days} (${aggB.n_days > 0 ? Math.round(aggB.n_qual / aggB.n_days * 100) : 0}%)` : "--",
+          delta: showB ? `${aggB.n_qual - aggA.n_qual >= 0 ? "+" : ""}${aggB.n_qual - aggA.n_qual} days` : "--"
+        });
+        // 2. Label Coverage
+        rows.push({
+          label: "Label Coverage",
+          dispA: `${aggA.focus_drift_cov_pct.toFixed(1)}%`,
+          dispB: showB ? `${aggB.focus_drift_cov_pct.toFixed(1)}%` : "--",
+          delta: showB ? `${aggB.focus_drift_cov_pct - aggA.focus_drift_cov_pct >= 0 ? "+" : ""}${(aggB.focus_drift_cov_pct - aggA.focus_drift_cov_pct).toFixed(1)}%` : "--"
+        });
+        // 3. Avg Focus Hours / Day
+        rows.push({
+          label: "Avg Focus Hours / Day",
+          dispA: `${aggA.avg_focus_hours.toFixed(1)}h`,
+          dispB: showB ? `${aggB.avg_focus_hours.toFixed(1)}h` : "--",
+          delta: showB ? `${aggB.avg_focus_hours - aggA.avg_focus_hours >= 0 ? "+" : ""}${(aggB.avg_focus_hours - aggA.avg_focus_hours).toFixed(1)}h` : "--"
+        });
+        // 4. Avg Drift Hours / Day
+        rows.push({
+          label: "Avg Drift Hours / Day",
+          dispA: `${aggA.avg_drift_hours.toFixed(1)}h`,
+          dispB: showB ? `${aggB.avg_drift_hours.toFixed(1)}h` : "--",
+          delta: showB ? `${aggB.avg_drift_hours - aggA.avg_drift_hours >= 0 ? "+" : ""}${(aggB.avg_drift_hours - aggA.avg_drift_hours).toFixed(1)}h` : "--"
+        });
+        // Top 3 Focus Windows
+        for (let i = 0; i < 3; i++) {
+          const wA = aggA.top_focus_windows?.[i];
+          const wB = aggB?.top_focus_windows?.[i];
+          let dStr = "--";
+          if (showB && wA && wB) {
+            const diffRate = wB.avg_minutes_per_hour - wA.avg_minutes_per_hour;
+            dStr = `${diffRate >= 0 ? "+" : ""}${Math.round(diffRate)}m/h`;
+          }
+          rows.push({
+            label: `Top Focus Window #${i + 1}`,
+            dispA: wA ? wA.display : "--",
+            dispB: showB ? (wB ? wB.display : "--") : "--",
+            delta: dStr
+          });
+        }
+        // Top 3 Drift Windows
+        for (let i = 0; i < 3; i++) {
+          const wA = aggA.top_drift_windows?.[i];
+          const wB = aggB?.top_drift_windows?.[i];
+          let dStr = "--";
+          if (showB && wA && wB) {
+            const diffRate = wB.avg_minutes_per_hour - wA.avg_minutes_per_hour;
+            dStr = `${diffRate >= 0 ? "+" : ""}${Math.round(diffRate)}m/h`;
+          }
+          rows.push({
+            label: `Top Drift Window #${i + 1}`,
+            dispA: wA ? wA.display : "--",
+            dispB: showB ? (wB ? wB.display : "--") : "--",
+            delta: dStr
+          });
+        }
+
+        rows.forEach(r => {
+          const tr = document.createElement("tr");
+          tr.className = "hover:bg-white/[0.02] transition";
+          tr.innerHTML = `
+            <td class="py-2 px-3 font-sans text-slate-300">${r.label}</td>
+            <td class="py-2 px-3 text-slate-200">${r.dispA}</td>
+            ${showB ? `<td class="py-2 px-3 text-emerald-300">${r.dispB}</td>` : ""}
+            ${showB ? `<td class="py-2 px-3 font-semibold ${r.delta.startsWith("+") ? "text-emerald-400" : r.delta.startsWith("-") ? "text-amber-400" : "text-slate-400"}">${r.delta}</td>` : ""}
+          `;
+          tbody.appendChild(tr);
+        });
+
+        container.appendChild(table);
+        return;
+      }
+
+      const metrics = tdComputeComparisonMetrics(
+        includedA,
+        includedB,
+        aggA,
+        aggB,
+        typicalDayBinMinutes,
+        typicalDayAxisStartHour
+      );
+
+      const table = document.createElement("table");
+      table.className = "w-full text-left text-xs font-mono border-collapse";
+
+      table.innerHTML = `
+        <thead>
+          <tr class="border-b border-[var(--border)] text-slate-400 text-[11px]">
+            <th class="py-2 px-3 font-medium">Metric</th>
+            <th class="py-2 px-3 font-medium text-slate-300">Range A (${aggA.n_days}d)</th>
+            ${showB ? `<th class="py-2 px-3 font-medium text-emerald-400">Range B (${aggB.n_days}d)</th>` : ""}
+            ${showB ? `<th class="py-2 px-3 font-medium text-indigo-400">Delta (B &minus; A)</th>` : ""}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/[0.04]">
+        </tbody>
+      `;
+
+      const tbody = table.querySelector("tbody");
+
+      metrics.rows.forEach(r => {
+        const valA = metrics.statsA ? metrics.statsA[r.key] : null;
+        const valB = metrics.statsB ? metrics.statsB[r.key] : null;
+
+        function formatVal(v) {
+          if (v === null || v === undefined) return "--";
+          if (r.isTime) return tdSecondsToTimeStr(v);
+          if (r.isDur) {
+            const h = Math.floor(v / 3600);
+            const m = Math.floor((v % 3600) / 60);
+            return `${h}h ${String(m).padStart(2, "0")}m`;
+          }
+          if (r.isPct) return `${v.toFixed(1)}%`;
+          if (typeof v === "number") return `${v.toFixed(1)}${r.unit || ""}`;
+          return String(v);
+        }
+
+        const dispA = formatVal(valA);
+        const dispB = formatVal(valB);
+
+        let deltaStr = "--";
+        if (showB && valA !== null && valB !== null) {
+          if (r.isTime) {
+            deltaStr = tdFormatDelta(valA, valB, true);
+          } else if (r.isDur) {
+            deltaStr = tdFormatDelta(valA, valB, false);
+          } else if (r.isPct) {
+            const d = valB - valA;
+            deltaStr = `${d >= 0 ? "+" : ""}${d.toFixed(1)}%`;
+          } else if (typeof valA === "number" && typeof valB === "number") {
+            const d = valB - valA;
+            deltaStr = `${d >= 0 ? "+" : ""}${d.toFixed(1)}${r.unit || ""}`;
+          } else {
+            deltaStr = (valA !== valB) ? "changed" : "same";
+          }
+        }
+
+        const tr = document.createElement("tr");
+        tr.className = "hover:bg-white/[0.02] transition";
+        tr.innerHTML = `
+          <td class="py-2 px-3 font-sans text-slate-300">${r.label}</td>
+          <td class="py-2 px-3 text-slate-200">${dispA}</td>
+          ${showB ? `<td class="py-2 px-3 text-emerald-300">${dispB}</td>` : ""}
+          ${showB ? `<td class="py-2 px-3 font-semibold ${deltaStr.startsWith("+") ? "text-emerald-400" : deltaStr.startsWith("-") ? "text-amber-400" : "text-slate-400"}">${deltaStr}</td>` : ""}
+        `;
+        tbody.appendChild(tr);
+      });
+
+      container.appendChild(table);
+    }
+
+
     // Filter tabs handlers
     document.querySelectorAll(".filter-btn").forEach(btn => {
       btn.onclick = () => {
@@ -4872,7 +6861,7 @@
       currentDate = localToday;
     }
 
-    const validTabs = ["overview", "analytics", "heatmap", "sessions", "journal"];
+    const validTabs = ["overview", "analytics", "heatmap", "typical-day", "sessions", "journal"];
     if (restoredTab && validTabs.includes(restoredTab)) {
       activeMainTab = restoredTab;
     }

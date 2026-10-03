@@ -11,8 +11,9 @@ Browser Extension(s) ──┐
                        ├──► Local Python Collector ──► D:\ActivityTracker\
 VS Code Extension ─────┘         (HTTP)                ├── raw\
                                                        │   └── YYYY-MM-DD.jsonl
-                                                       └── reports\
-                                                           └── YYYY-MM-DD.json
+                                                       └── report\
+                                                           ├── YYYY-MM-DD.json       (Full report for dashboard)
+                                                           └── YYYY-MM-DD.chat.json  (Lean report for LLM chat)
 ```
 
 - **Browser extensions** and the **VS Code extension** send activity events via HTTP to a local Python collector
@@ -182,15 +183,30 @@ Date range:
 python reporting/generate_report.py --from 2026-09-28 --to 2026-09-29
 ```
 
-Reports are written to `D:\ActivityTracker\reports/`.
+Rebuild all historical reports and compile dashboard:
+```powershell
+python reporting/generate_report.py --rebuild-all
+```
+
+**Two Outputs Per Day:**
+Each run automatically generates two files in `Record/report/<YYYY>/<mmm>/daily/`:
+1. **`DATE.json` (Full Report)**: The complete report preserved for the visual dashboard (`dashboard.html`). Written as compact single-line JSON by default (add `--pretty` if you want human-readable indentation). Retains full segment lists, longest sessions, hourly breakdown, and merged offline ranges.
+2. **`DATE.chat.json` (Lean Chat Report)**: The lean file specifically designed to be pasted directly into LLM chats. Stays under 25 KB even on heavy days (~165 timeline entries, well below the 30 KB hard ceiling). Contains a trimmed summary, daily metrics, label totals, label coverage percentage, per-source breakdown, top 15 titles, top domains, mobile apps, desktop apps, manual events, compact timeline rows (`[start, end, duration, source, name, domain, label]`), and condensed data quality metrics.
 
 ### 8. Inspect the Report
 
+**Which file goes into chat?**
+Paste **`DATE.chat.json`** into your LLM chat (Gemini, ChatGPT, Claude). It is optimized to stay under 25 KB while retaining all context the LLM needs to analyze your day.
+
 ```powershell
-Get-Content D:\ActivityTracker\reports\2026-09-29.json | ConvertFrom-Json
+# Copy lean chat report to clipboard on Windows
+Get-Content Record\report\2026\oct\daily\2026-10-02.chat.json | Set-Clipboard
 ```
 
-Or simply read the JSON file. It's designed for AI agents to consume.
+Or inspect the full report for the dashboard:
+```powershell
+Get-Content Record\report\2026\oct\daily\2026-10-02.json | ConvertFrom-Json
+```
 
 ## Event Schema
 
@@ -288,9 +304,11 @@ Labels are embedded inside a hidden HTML comment at the top of the daily analysi
 - **Safety**: Malformed blocks produce warnings in `data_quality.label_warnings` without failing report generation.
 - **Timeline Integration**: Timeline sessions that fall entirely within a label interval receive `"label": "<label_name>"`; partial or uncovered sessions receive `"unlabeled"`.
 
-## Dashboard & Trends (Phase E)
+## Dashboard Views: Calendar & Typical Day
 
-The dashboard computes all visualizations client-side from embedded reports:
+The dashboard (`Record/report/dashboard.html`) computes all visualizations entirely client-side from embedded reports:
+
+### 1. Calendar Tab (Heatmap & Trends)
 - **Range Selector**: Day (15-minute cells), Week (last 7 days, default), Month (last 30 days), and Custom date picker (ranges $>60$ days aggregate rows by week).
 - **Layers**:
   - **Activity**: Screen union minutes per cell (scale: 0 to 60m).
@@ -300,7 +318,89 @@ The dashboard computes all visualizations client-side from embedded reports:
 - **Multi-select Label Filters**: Filter heatmap cells by one or more labels.
 - **Interactive Tooltip**: Hovering over any cell displays duration, device breakdown, top application/title, dominant label, and sleep indicators.
 - **Summary Metrics**: Average first/last activity, highest work hours (`build`+`practice`+`learn`), highest leisure hours, average sleep duration and bedtime, plus an automatic warning banner if range label coverage falls below 70%.
-- **Sleep & Baseline Panel**: Client-side SVG line chart of sleep duration and wake time, rolling 14-day median baseline, sleep regularity metric (standard deviation of bedtime in minutes), and "Today vs baseline" comparison card (with helpful fallback if $<7$ days recorded).
+- **Sleep & Baseline Panel**: Client-side SVG line chart of sleep duration and wake time, rolling 14-day median baseline, sleep regularity metric (standard deviation of bedtime in minutes), and "Today vs baseline" comparison card (with fallback if $<7$ days recorded).
+
+### 2. Typical Day Tab (Routine Synthesis & Dual Range Comparison)
+- **Zero Report Bloat**: Precomputes 96-bin daily arrays client-side on demand and caches them in memory.
+- **Dual Range Comparison**:
+  - **Range A (Target)** and optional **Range B (Comparison)**.
+  - Presets: Last 7 days, Last 14 days, Last 30 days, and "This period vs previous period of same length".
+  - Custom date pickers for both ranges.
+  - Day filters: All / Weekdays / Weekends.
+  - Device filters: All / PC / Phone.
+- **Day Inclusion & Quality Gates**:
+  - Excludes days with 0 sessions or $<30$ minutes of accounted time.
+  - Flags days where collector/watcher was offline for most of the day.
+  - Displays "N days included, M excluded". If $<5$ included days, suppresses statistical averages to prevent skew.
+- **Flexible 24h Axis**:
+  - Bins: 15-minute (default), 30-minute, or 60-minute resolution.
+  - Selectable axis start: `00:00`, `06:00`, `12:00`, or `18:00` (evening start keeps midnight-crossing sleep unbroken as a single contiguous block).
+  - **Horizontal Strip Layers (Range A above Range B, plus Delta Strip)**:
+  - **Activity**: % of included days with screen activity in bin (color intensity). Hover shows %, average active minutes, and N days.
+  - **Sleep**: % of included nights asleep. Overlays vertical markers for median bedtime and wake time with shaded IQR band. Reports manual vs inferred night counts.
+  - **Device**: PC share vs phone share stacked per bin.
+  - **Labels**: Dominant label by average minutes, intensity from average minutes, unlabeled in neutral gray, range coverage badge (warning if $<70\%$), multi-select label filters.
+  - **Focus vs Drift**:
+    - **Focus**: `build` + `practice` + `learn` (emerald track).
+    - **Drift**: `leisure` (rose track), with toggle for **unplanned only** (`planned: false`) vs all leisure.
+    - **Neutral**: `stay-current`, `career`, `comms`, `other` (+ planned leisure when unplanned-only is enabled).
+    - **Unlabeled**: Rendered as a distinct gray share per bin to clearly expose unaccounted/unlabeled time.
+    - **Coverage Quality Gate**: Only days meeting the minimum label coverage threshold (default $\ge 60\%$, adjustable) count for synthesis; displays qualified day count (e.g. `6 of 7 days qualified`).
+    - **Dedicated Summary Table**: Compares Top 3 Focus Windows ($\ge 1\text{h}$ contiguous), Top 3 Drift Windows ($\ge 1\text{h}$ contiguous), Average Focus Hours/Day, Average Drift Hours/Day, and Label Coverage % across Range A, Range B, and Delta.
+  - **Difference Strip (B minus A)**: Diverging color scale (emerald for positive difference, rose for negative difference) comparing Range B directly against Range A.
+- **Comparison & Regularity Table**:
+  - Compares 12 core metrics across Range A, Range B, and Delta:
+    1. Median Bedtime (wrap-aware circular statistics)
+    2. Median Wake Time (wrap-aware circular statistics)
+    3. Average Sleep Duration
+    4. Bedtime Regularity (IQR)
+    5. Average First Activity
+    6. Average Last Activity
+    7. Average Active Hours
+    8. Phone Share (%)
+    9. Peak Activity Window (1h rolling window)
+    10. Peak Work Window (`build` + `practice` + `learn`)
+    11. Peak Leisure Window
+    12. Average Late-Night Screen Minutes (00:00 to 05:00)
+  - Deltas formatted with plain-word shifts (`+1h 30m later`, `-45m earlier`, `+1.2h`, `+5.3%`).
+
+## Data Safeguards & Backup
+
+### 1. Full Idempotent Rebuild (`--rebuild-all`)
+Regenerates every daily report from the raw event store and compiles the dashboard:
+```powershell
+python -m reporting.generate_report --rebuild-all
+```
+- Discovers all raw dates (both flat `raw/*.jsonl` and hierarchical `raw/YYYY/mmm/daily/*.jsonl`).
+- Regenerates each daily JSON report idempotently without duplicating or modifying raw events.
+- Automatically triggers `Record/report/dashboard.html` update upon completion.
+
+### 2. One-Line Data Directory Backup
+Back up the whole data directory (`raw`, `analysis`, `manual`) into a timestamped archive:
+
+**PowerShell (Windows):**
+```powershell
+Compress-Archive -Path "Record\raw", "Record\analysis", "Record\manual" -DestinationPath "Record_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
+```
+
+**Bash / Linux / macOS:**
+```bash
+tar -czf "Record_backup_$(date +%Y%m%d_%H%M%S).tar.gz" Record/raw Record/analysis Record/manual
+```
+
+## Diagnostic & Comparison Tools
+
+### Raw Context Diagnostic Tool (`tools/diagnose.py`)
+Inspect raw browser context values and per-app mobile totals for direct comparison against Android Digital Wellbeing:
+```powershell
+python tools/diagnose.py --date 2026-10-01
+```
+
+### Synthetic Comparison Demo (`tools/generate_demo_comparison.py`)
+Generates a synthetic 14-day dataset where Range B shifts sleep bedtime and wake time by ~2 hours later, and verifies comparison metrics and difference strips:
+```powershell
+python tools/generate_demo_comparison.py
+```
 
 ## Key Invariants
 
@@ -330,11 +430,10 @@ python -m pytest tests/ -v
 The intended workflow:
 
 ```
-User:  "Analyze what I did yesterday."
-Agent: *reads D:\ActivityTracker\reports\2026-09-28.json*
+User:  "Analyze what I did yesterday." [pastes Record/report/2026/sep/daily/2026-09-28.chat.json]
+Agent: *reads 2026-09-28.chat.json*
 Agent: "You spent 3h 20m coding in RAG-Studio (mostly Python), 1h 15m on GitHub
-        reviewing PRs, and 45m on ChatGPT. You had 42 context switches with your
-        longest uninterrupted session being 28 minutes on retriever.py."
+        reviewing PRs, and 45m on ChatGPT. Your longest focus block was 28 minutes on retriever.py."
 ```
 
 The agent can answer:

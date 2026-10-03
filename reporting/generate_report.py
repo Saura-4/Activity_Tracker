@@ -51,8 +51,32 @@ from typing import List, Dict, Any, Tuple, Optional
 # Add parent directory to path so we can import collector modules
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from collector.config import get_config, ALLOWED_LABELS
+from collector.manual_storage import infer_offline_label
 
 DEFAULT_SESSION_MERGE_GAP_SECONDS = 30.0
+
+
+def normalize_event_context(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize event context, ensuring browser events have a valid non-empty domain."""
+    src = event.get("source")
+    if src == "browser":
+        ctx = event.get("context")
+        if isinstance(ctx, dict):
+            dom = ctx.get("domain")
+            if not dom:
+                url_str = ctx.get("url") or ""
+                title_str = ctx.get("title") or ""
+                if url_str.startswith("file://") or "dashboard" in title_str.lower():
+                    new_ctx = dict(ctx)
+                    new_ctx["domain"] = "local-file"
+                    event = dict(event)
+                    event["context"] = new_ctx
+                elif url_str or title_str:
+                    new_ctx = dict(ctx)
+                    new_ctx["domain"] = "unknown"
+                    event = dict(event)
+                    event["context"] = new_ctx
+    return event
 
 
 def read_events(filepath: str) -> List[Dict[str, Any]]:
@@ -77,7 +101,7 @@ def read_events(filepath: str) -> List[Dict[str, Any]]:
                 event = json.loads(line)
                 required = ["id", "start", "end", "duration_seconds", "source"]
                 if all(r in event for r in required):
-                    events.append(event)
+                    events.append(normalize_event_context(event))
                 else:
                     malformed_count += 1
             except json.JSONDecodeError:
@@ -149,6 +173,188 @@ def get_report_timezone(events: List[Dict[str, Any]]) -> timezone:
     return datetime.now().astimezone().tzinfo
 
 
+def round_dt_to_seconds(dt: datetime) -> datetime:
+    """Round datetime to the nearest second and strip microseconds."""
+    if dt.microsecond >= 500_000:
+        dt = dt + timedelta(seconds=1)
+    return dt.replace(microsecond=0)
+
+
+def format_iso_seconds(ts: Any, report_tz: timezone) -> Optional[str]:
+    """Convert timestamp (string or datetime) to ISO format with report_tz and rounded to seconds."""
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        try:
+            dt = parse_to_utc(ts).astimezone(report_tz)
+        except Exception:
+            return ts
+    elif isinstance(ts, datetime):
+        dt = ts.astimezone(report_tz)
+    else:
+        return str(ts)
+    dt = round_dt_to_seconds(dt)
+    return dt.isoformat()
+
+
+def merge_data_quality_ranges(
+    ranges: List[Dict[str, Any]],
+    report_tz: timezone,
+    gap_threshold_seconds: float = 60.0,
+) -> List[Dict[str, Any]]:
+    """Merge ranges that are less than gap_threshold_seconds apart.
+    
+    Timestamps are converted to report_tz and rounded to seconds (no microseconds).
+    """
+    if not ranges:
+        return []
+
+    parsed = []
+    for r in ranges:
+        s_val = r.get("start")
+        e_val = r.get("end")
+        if not s_val or not e_val:
+            continue
+        s_dt = parse_to_utc(s_val).astimezone(report_tz) if isinstance(s_val, str) else s_val.astimezone(report_tz)
+        e_dt = parse_to_utc(e_val).astimezone(report_tz) if isinstance(e_val, str) else e_val.astimezone(report_tz)
+        s_dt = round_dt_to_seconds(s_dt)
+        e_dt = round_dt_to_seconds(e_dt)
+        if e_dt > s_dt:
+            parsed.append((s_dt, e_dt))
+
+    if not parsed:
+        return []
+
+    parsed.sort(key=lambda x: x[0])
+
+    merged = [list(parsed[0])]
+    for s_dt, e_dt in parsed[1:]:
+        prev_end = merged[-1][1]
+        gap = (s_dt - prev_end).total_seconds()
+        if gap < gap_threshold_seconds:
+            merged[-1][1] = max(prev_end, e_dt)
+        else:
+            merged.append([s_dt, e_dt])
+
+    result = []
+    for s_dt, e_dt in merged:
+        dur = round((e_dt - s_dt).total_seconds(), 1)
+        result.append({
+            "start": s_dt.isoformat(),
+            "end": e_dt.isoformat(),
+            "duration_seconds": dur,
+        })
+    return result
+
+
+def build_chat_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate a lean chat report (DATE.chat.json) targeted under 25 KB for pasting into chat.
+    
+    Contents:
+    date, trimmed summary (total screen seconds, per-source seconds, brief seconds and count),
+    daily_metrics, label_totals, label_coverage_pct, per-source sources.
+    Top 15 titles, top domains, mobile apps, desktop apps, manual events (activity, start, end, duration).
+    The timeline as compact rows with a column header: start and end as local HH:MM:SS (date once at the top),
+    duration in seconds, source, name (title, app, workspace or activity), domain, label.
+    Condensed data_quality: sources present, last mobile sync, total fallback seconds and count,
+    total watcher-offline seconds and count, label warnings. No individual ranges.
+    Omitted: per-entry segments, raw_event_count, longest_sessions, hourly_breakdown, individual offline ranges.
+    """
+    full_summary = report.get("summary", {})
+    chat_summary = {
+        "screen_seconds": full_summary.get("screen_seconds", 0.0),
+        "total_screen_seconds": full_summary.get("screen_seconds", 0.0),
+        "browser_seconds": full_summary.get("browser_seconds", 0.0),
+        "vscode_seconds": full_summary.get("vscode_seconds", 0.0),
+        "mobile_seconds": full_summary.get("mobile_seconds", 0.0),
+        "desktop_seconds": full_summary.get("desktop_seconds", 0.0),
+        "manual_seconds": full_summary.get("manual_seconds", 0.0),
+        "brief_seconds": full_summary.get("brief_seconds", 0.0),
+        "brief_session_count": full_summary.get("brief_session_count", 0),
+    }
+
+    # Manual events (activity, start, end, duration)
+    manual_events = []
+    for entry in report.get("timeline", []):
+        if entry.get("source") == "manual":
+            ctx = entry.get("context", {})
+            act = ctx.get("activity") or ctx.get("title") or "Manual"
+            manual_events.append({
+                "activity": act,
+                "start": entry.get("start"),
+                "end": entry.get("end"),
+                "duration": round(float(entry.get("duration_seconds", 0.0)), 1),
+            })
+
+    # Timeline as compact rows with a column header:
+    # start, end as local HH:MM:SS, duration in seconds, source, name, domain, label
+    tl_header = ["start", "end", "duration", "source", "name", "domain", "label"]
+    tl_rows = [tl_header]
+    for entry in report.get("timeline", []):
+        s_val = str(entry.get("start", ""))
+        e_val = str(entry.get("end", ""))
+        s_time = s_val.split("T")[1][:8] if "T" in s_val else s_val
+        e_time = e_val.split("T")[1][:8] if "T" in e_val else e_val
+
+        dur = round(float(entry.get("duration_seconds", 0.0)), 1)
+        src = entry.get("source", "")
+        ctx = entry.get("context", {})
+        if src == "browser":
+            name = ctx.get("title") or ""
+            domain = ctx.get("domain") or ""
+        elif src == "vscode":
+            name = ctx.get("workspace") or ""
+            domain = ""
+        elif src == "mobile":
+            name = ctx.get("app") or ""
+            domain = ""
+        elif src == "desktop":
+            name = ctx.get("app") or ""
+            domain = ""
+        elif src == "manual":
+            name = ctx.get("activity") or ctx.get("title") or ""
+            domain = ""
+        else:
+            name = ctx.get("title") or ctx.get("app") or ctx.get("workspace") or ctx.get("activity") or ""
+            domain = ctx.get("domain") or ""
+
+        lbl = entry.get("label") or ""
+        tl_rows.append([s_time, e_time, dur, src, name, domain, lbl])
+
+    # Condensed data_quality
+    dq = report.get("data_quality", {})
+    fb_ranges = dq.get("fallback_ranges", [])
+    wo_ranges = dq.get("watcher_offline_ranges", [])
+    tot_fb_sec = round(sum(float(r.get("duration_seconds", 0.0)) for r in fb_ranges), 1)
+    tot_wo_sec = round(sum(float(r.get("duration_seconds", 0.0)) for r in wo_ranges), 1)
+
+    condensed_dq = {
+        "sources_present": dq.get("sources_present", []),
+        "last_mobile_sync": dq.get("last_mobile_sync"),
+        "total_fallback_seconds": tot_fb_sec,
+        "fallback_count": len(fb_ranges),
+        "total_watcher_offline_seconds": tot_wo_sec,
+        "watcher_offline_count": len(wo_ranges),
+        "label_warnings": dq.get("label_warnings", []),
+    }
+
+    return {
+        "date": report.get("date"),
+        "summary": chat_summary,
+        "daily_metrics": report.get("daily_metrics", {}),
+        "label_totals": report.get("label_totals", {}),
+        "label_coverage_pct": report.get("label_coverage_pct", 0.0),
+        "sources": report.get("sources", {}),
+        "titles": report.get("titles", [])[:15],
+        "domains": report.get("domains", []),
+        "apps": report.get("apps", []),
+        "desktop_apps": report.get("desktop_apps", []),
+        "manual_events": manual_events,
+        "timeline": tl_rows,
+        "data_quality": condensed_dq,
+    }
+
+
 def get_context_key(event: Dict[str, Any]) -> Tuple:
     """Generate a deterministic, hashable key representing the activity context.
     
@@ -214,6 +420,7 @@ def sessionize_events(
     parsed = []
     for e in raw_events:
         try:
+            e = normalize_event_context(e)
             s_dt = parse_to_utc(e["start"])
             e_dt = parse_to_utc(e["end"])
             dur = float(e.get("duration_seconds", (e_dt - s_dt).total_seconds()))
@@ -306,8 +513,15 @@ def clean_context_for_report(source: str, ctx: Dict[str, Any]) -> Dict[str, Any]
         clean = {}
         if "title" in ctx:
             clean["title"] = ctx["title"]
-        if "domain" in ctx:
-            clean["domain"] = ctx["domain"]
+        dom = ctx.get("domain")
+        if not dom:
+            url_str = ctx.get("url") or ""
+            title_str = ctx.get("title") or ""
+            if url_str.startswith("file://") or "dashboard" in title_str.lower():
+                dom = "local-file"
+            else:
+                dom = "unknown"
+        clean["domain"] = dom
         return clean
     elif source == "vscode":
         clean = {}
@@ -372,6 +586,21 @@ def split_interval_by_hour(start_dt: datetime, end_dt: datetime) -> List[Tuple[i
         current = segment_end
     return segments
 
+def compute_union_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+    """Compute the sorted, non-overlapping union of intervals."""
+    if not intervals:
+        return []
+    sorted_intervals = sorted(intervals, key=lambda x: x[0])
+    merged = [sorted_intervals[0]]
+    for start, end in sorted_intervals[1:]:
+        prev_start, prev_end = merged[-1]
+        if start <= prev_end:
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def compute_union_seconds(intervals: List[Tuple[datetime, datetime]]) -> float:
     """Compute total wall-clock seconds covered by a set of potentially overlapping intervals.
     
@@ -383,21 +612,7 @@ def compute_union_seconds(intervals: List[Tuple[datetime, datetime]]) -> float:
     This guarantees total_active_seconds <= observed_span_seconds, even when
     PC and mobile sessions overlap (e.g., phone use while PC session is open).
     """
-    if not intervals:
-        return 0.0
-    
-    sorted_intervals = sorted(intervals, key=lambda x: x[0])
-    merged = [sorted_intervals[0]]
-    
-    for start, end in sorted_intervals[1:]:
-        prev_start, prev_end = merged[-1]
-        if start <= prev_end:
-            # Overlapping or adjacent — extend
-            merged[-1] = (prev_start, max(prev_end, end))
-        else:
-            merged.append((start, end))
-    
-    return sum((end - start).total_seconds() for start, end in merged)
+    return sum((end - start).total_seconds() for start, end in compute_union_intervals(intervals))
 
 
 def classify_desktop_app(app: str, proc: str = "") -> str:
@@ -480,12 +695,93 @@ def find_recent_vscode_workspace(
     return None
 
 
+def clean_browser_window_title(win_title: str) -> str:
+    """Clean browser window title from desktop watcher, stripping browser name suffixes.
+    
+    Returns clean title if meaningful, or empty string if title is generic/empty.
+    """
+    if not win_title or not isinstance(win_title, str):
+        return ""
+    t = win_title.strip()
+    
+    # Strip browser trailing suffixes
+    suffixes = [
+        " - Google Chrome",
+        " - Brave",
+        " - Microsoft Edge",
+        " - Microsoft\u200b Edge",
+        " - Chromium",
+        " - Chrome",
+    ]
+    for suffix in suffixes:
+        if t.endswith(suffix):
+            t = t[:-len(suffix)].strip()
+            break
+            
+    # Generic titles that should be treated as unknown page
+    generic_titles = {
+        "", "chrome", "google chrome", "brave", "edge", "microsoft edge",
+        "new tab", "about:blank", "unknown page", "start page",
+        "untitled", "loading...", "loading", "blank", "inprivate", "personal",
+        "history", "settings", "extensions", "downloads"
+    }
+    if t.lower() in generic_titles:
+        return ""
+    return t
+
+
+def infer_domain_from_title(title: str) -> str:
+    """Infer domain from window title if possible, else return 'unknown'."""
+    if not title:
+        return "unknown"
+    t_lower = title.lower()
+    
+    if "chatgpt" in t_lower or "openai" in t_lower:
+        return "chatgpt.com"
+    if "youtube" in t_lower:
+        return "youtube.com"
+    if "github" in t_lower:
+        return "github.com"
+    if "footybite" in t_lower:
+        return "footybite.to"
+    if "reddit" in t_lower:
+        return "reddit.com"
+    if "twitter" in t_lower or "x.com" in t_lower:
+        return "x.com"
+    if "claude" in t_lower or "anthropic" in t_lower:
+        return "claude.ai"
+    if "activity dashboard" in t_lower or "dashboard.html" in t_lower:
+        return "local-file"
+
+    m = re.search(r'\b([a-zA-Z0-9-]+\.(?:com|org|io|net|edu|gov|co|tv|app|dev|ai|to))\b', title, re.IGNORECASE)
+    if m:
+        return m.group(1).lower()
+
+    return "unknown"
+
+
+def find_domain_for_title(title: str, ext_events: List[Dict[str, Any]]) -> str:
+    """Find the domain associated with a title from extension events, or infer it."""
+    if not title:
+        return "unknown"
+    for ev in ext_events:
+        ctx = ev.get("context", {})
+        ev_title = ctx.get("title", "")
+        ev_dom = ctx.get("domain", "")
+        if ev_dom and ev_dom != "unknown":
+            if title == ev_title or (len(title) > 5 and title in ev_title) or (len(ev_title) > 5 and ev_title in title):
+                return ev_dom
+
+    return infer_domain_from_title(title)
+
+
 def carve_window_with_extension_events(
     win_start: datetime,
     win_end: datetime,
     ext_events: List[Dict[str, Any]],
     fg_type: str,
     app_name: str,
+    win_title: str = "",
 ) -> List[Dict[str, Any]]:
     """Carve a desktop foreground window [win_start, win_end] with matching extension events.
     Resolves overlaps between events (e.g. multiple profiles) chronologically by giving precedence
@@ -529,6 +825,9 @@ def carve_window_with_extension_events(
                 }
             }
         else:
+            cleaned = clean_browser_window_title(win_title) if win_title else ""
+            title_text = cleaned if cleaned else f"{disp_name} (unknown page)"
+            inferred_dom = find_domain_for_title(title_text, ext_events) if cleaned else "unknown"
             return {
                 "id": f"browser-unknown-{s.strftime('%H%M%S%f')}",
                 "source": "browser",
@@ -540,8 +839,8 @@ def carve_window_with_extension_events(
                 "_duration_seconds": d,
                 "context": {
                     "browser": fg_type,
-                    "domain": "unknown",
-                    "title": f"{disp_name} (unknown page)",
+                    "domain": inferred_dom,
+                    "title": title_text,
                     "url": ""
                 }
             }
@@ -612,6 +911,7 @@ def build_pc_timeline(
     parsed = []
     for e in events:
         try:
+            e = normalize_event_context(e)
             s_dt = parse_to_utc(e["start"])
             e_dt = parse_to_utc(e["end"])
             dur = float(e.get("duration_seconds", (e_dt - s_dt).total_seconds()))
@@ -785,13 +1085,13 @@ def build_pc_timeline(
                     active_pieces = subtract_intervals([(p_start, p_end)], idle_intervals)
 
                 for s_act, e_act in active_pieces:
-                    carved = carve_window_with_extension_events(s_act, e_act, matching, app_type, app)
+                    carved = carve_window_with_extension_events(s_act, e_act, matching, app_type, app, win_title=title)
                     pc_timeline_events.extend(carved)
 
             elif app_type == "vscode":
                 active_pieces = subtract_intervals([(p_start, p_end)], idle_intervals)
                 for s_act, e_act in active_pieces:
-                    carved = carve_window_with_extension_events(s_act, e_act, vscode_events, "vscode", app)
+                    carved = carve_window_with_extension_events(s_act, e_act, vscode_events, "vscode", app, win_title=title)
                     pc_timeline_events.extend(carved)
 
     pc_timeline_events.sort(key=lambda x: (x["_start_dt"], x["_end_dt"]))
@@ -855,8 +1155,8 @@ def compute_focus_blocks(
                 curr_dur += d
             else:
                 all_blocks.append({
-                    "start": curr_s.astimezone(report_tz).isoformat(),
-                    "end": curr_e.astimezone(report_tz).isoformat(),
+                    "start": format_iso_seconds(curr_s, report_tz),
+                    "end": format_iso_seconds(curr_e, report_tz),
                     "duration_seconds": round(curr_dur, 1),
                     "duration": round(curr_dur, 1),
                     "type": ctx_type,
@@ -864,8 +1164,8 @@ def compute_focus_blocks(
                 })
                 curr_s, curr_e, curr_dur = s, e, d
         all_blocks.append({
-            "start": curr_s.astimezone(report_tz).isoformat(),
-            "end": curr_e.astimezone(report_tz).isoformat(),
+            "start": format_iso_seconds(curr_s, report_tz),
+            "end": format_iso_seconds(curr_e, report_tz),
             "duration_seconds": round(curr_dur, 1),
             "duration": round(curr_dur, 1),
             "type": ctx_type,
@@ -1002,8 +1302,8 @@ def compute_sleep_metrics(
                 if first_after is None or s_m < first_after:
                     first_after = s_m
         return (
-            last_before.isoformat() if last_before else None,
-            first_after.isoformat() if first_after else None,
+            format_iso_seconds(last_before, report_tz) if last_before else None,
+            format_iso_seconds(first_after, report_tz) if first_after else None,
         )
 
     if manual_sleep_candidates:
@@ -1012,8 +1312,8 @@ def compute_sleep_metrics(
         phone_before, phone_after = get_phone_boundaries(m_s, m_e)
         return {
             "status": "ok",
-            "bedtime": m_s.isoformat(),
-            "wake_time": m_e.isoformat(),
+            "bedtime": format_iso_seconds(m_s, report_tz),
+            "wake_time": format_iso_seconds(m_e, report_tz),
             "duration_seconds": round(m_dur, 1),
             "duration": round(m_dur, 1),
             "source": "manual",
@@ -1085,8 +1385,8 @@ def compute_sleep_metrics(
 
     return {
         "status": "ok",
-        "bedtime": best_s.isoformat(),
-        "wake_time": best_e.isoformat(),
+        "bedtime": format_iso_seconds(best_s, report_tz),
+        "wake_time": format_iso_seconds(best_e, report_tz),
         "duration_seconds": round(best_dur, 1),
         "duration": round(best_dur, 1),
         "source": "inferred",
@@ -1255,11 +1555,12 @@ def overlay_labels_on_screen_time(
     screen_intervals: List[Tuple[datetime, datetime]],
     resolved_labels: List[Dict[str, Any]],
     allowed_labels: Optional[List[str]] = None,
-) -> Tuple[Dict[str, Dict[str, float]], float, float, float, List[str]]:
-    """Overlay resolved label intervals on screen intervals.
+    report_tz: Optional[timezone] = None,
+) -> Tuple[Dict[str, Dict[str, float]], float, float, float, List[str], List[Dict[str, Any]]]:
+    """Overlay resolved label intervals on the union of screen intervals.
     
     Returns:
-        (label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, warnings)
+        (label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, warnings, label_segments)
     """
     if allowed_labels is None:
         allowed_labels = list(ALLOWED_LABELS)
@@ -1270,49 +1571,55 @@ def overlay_labels_on_screen_time(
         for lbl in allowed_labels
     }
     warnings = []
+    label_segments = []
 
-    total_screen_seconds = compute_union_seconds(screen_intervals) if screen_intervals else 0.0
-    if not screen_intervals or not resolved_labels:
-        return label_totals, 0.0, total_screen_seconds, 0.0, warnings
-
-    labeled_intervals = []
+    # Applied to the non-overlapping union of screen time so each minute gets one label and is counted once
+    screen_union = compute_union_intervals(screen_intervals) if screen_intervals else []
+    total_screen_seconds = round(sum((end - start).total_seconds() for start, end in screen_union), 1)
+    if not screen_union or not resolved_labels:
+        return label_totals, 0.0, total_screen_seconds, 0.0, warnings, label_segments
 
     for lbl_item in resolved_labels:
         lbl_name = lbl_item["label"]
         l_s = lbl_item["start_dt"]
         l_e = lbl_item["end_dt"]
-        is_planned = lbl_item.get("planned", False)
+        is_planned = bool(lbl_item.get("planned", False))
 
-        overlapping_pieces = []
-        for s_s, s_e in screen_intervals:
+        target_key = lbl_name
+        if target_key not in allowed_set:
+            target_key = "other"
+            warn_msg = f"Unknown label '{lbl_name}' treated as 'other'"
+            if warn_msg not in warnings:
+                warnings.append(warn_msg)
+
+        for s_s, s_e in screen_union:
             int_s = max(s_s, l_s)
             int_e = min(s_e, l_e)
             if int_e > int_s:
-                overlapping_pieces.append((int_s, int_e))
-                labeled_intervals.append((int_s, int_e))
-
-        dur = compute_union_seconds(overlapping_pieces)
-        if dur > 0.001:
-            target_key = lbl_name
-            if target_key not in allowed_set:
-                target_key = "other"
-                warn_msg = f"Unknown label '{lbl_name}' treated as 'other'"
-                if warn_msg not in warnings:
-                    warnings.append(warn_msg)
-
-            label_totals[target_key]["duration_seconds"] += dur
-            if is_planned:
-                label_totals[target_key]["planned_seconds"] += dur
+                seg_dur = round((int_e - int_s).total_seconds(), 1)
+                if seg_dur > 0.0:
+                    tz_to_use = report_tz or (int_s.tzinfo if int_s.tzinfo else timezone.utc)
+                    label_segments.append({
+                        "start": format_iso_seconds(int_s, tz_to_use),
+                        "end": format_iso_seconds(int_e, tz_to_use),
+                        "duration_seconds": seg_dur,
+                        "label": target_key,
+                        "planned": is_planned,
+                    })
+                    label_totals[target_key]["duration_seconds"] += seg_dur
+                    if is_planned:
+                        label_totals[target_key]["planned_seconds"] += seg_dur
 
     for lbl in label_totals:
         label_totals[lbl]["duration_seconds"] = round(label_totals[lbl]["duration_seconds"], 1)
         label_totals[lbl]["planned_seconds"] = round(label_totals[lbl]["planned_seconds"], 1)
 
-    labeled_seconds = round(compute_union_seconds(labeled_intervals), 1)
+    label_segments.sort(key=lambda x: x["start"])
+    labeled_seconds = min(total_screen_seconds, round(sum(seg["duration_seconds"] for seg in label_segments), 1))
     unlabeled_seconds = max(0.0, round(total_screen_seconds - labeled_seconds, 1))
-    label_coverage_pct = round(labeled_seconds / total_screen_seconds * 100, 1) if total_screen_seconds > 0 else 0.0
+    label_coverage_pct = min(100.0, round(labeled_seconds / total_screen_seconds * 100, 1)) if total_screen_seconds > 0 else 0.0
 
-    return label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, warnings
+    return label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, warnings, label_segments
 
 
 def read_analysis_for_date(data_directory: Optional[str], date_str: str) -> Optional[str]:
@@ -1459,7 +1766,7 @@ def aggregate_events(
 
         if source == "browser":
             browser_seconds += dur
-            domain = ctx.get("domain", "unknown")
+            domain = ctx.get("domain") or ("local-file" if (ctx.get("url") or "").startswith("file://") or "dashboard" in (ctx.get("title") or "").lower() else "unknown")
             title = ctx.get("title", "")
             domain_stats[domain]["duration"] += dur
             domain_stats[domain]["count"] += 1
@@ -1653,8 +1960,8 @@ def aggregate_events(
     longest_sessions = sorted(
         [
             {
-                "start": s["start_dt"].astimezone(report_tz).isoformat(),
-                "end": s["end_dt"].astimezone(report_tz).isoformat(),
+                "start": format_iso_seconds(s["start_dt"], report_tz),
+                "end": format_iso_seconds(s["end_dt"], report_tz),
                 "duration_seconds": round(float(s["duration_seconds"]), 1),
                 "source": s["source"],
                 "context": clean_context_for_report(s["source"], s.get("context", {})),
@@ -1704,16 +2011,16 @@ def aggregate_events(
             m_path = Path(data_directory) / "raw" / str(d.year) / d.strftime("%b").lower() / "daily" / "mobile" / f"{date_str}.jsonl"
             if m_path.exists():
                 mtime = os.path.getmtime(m_path)
-                last_mobile_sync = datetime.fromtimestamp(mtime, tz=report_tz).isoformat()
+                last_mobile_sync = format_iso_seconds(datetime.fromtimestamp(mtime, tz=report_tz), report_tz)
             else:
                 legacy_m = Path(data_directory) / "raw" / "mobile" / f"{date_str}.jsonl"
                 if legacy_m.exists():
                     mtime = os.path.getmtime(legacy_m)
-                    last_mobile_sync = datetime.fromtimestamp(mtime, tz=report_tz).isoformat()
+                    last_mobile_sync = format_iso_seconds(datetime.fromtimestamp(mtime, tz=report_tz), report_tz)
         except Exception:
             pass
 
-    collector_offline_ranges = []
+    raw_collector_offline = []
     if all_intervals:
         sorted_acc = sorted(all_intervals, key=lambda x: x[0])
         merged_acc = [sorted_acc[0]]
@@ -1727,31 +2034,15 @@ def aggregate_events(
             gap_e = merged_acc[i + 1][0]
             dur = (gap_e - gap_s).total_seconds()
             if dur >= 3600.0:
-                collector_offline_ranges.append({
-                    "start": gap_s.astimezone(report_tz).isoformat(),
-                    "end": gap_e.astimezone(report_tz).isoformat(),
+                raw_collector_offline.append({
+                    "start": gap_s,
+                    "end": gap_e,
                     "duration_seconds": round(dur, 1),
                 })
 
-    formatted_watcher_offline = []
-    for r in watcher_offline_ranges:
-        s_dt = parse_to_utc(r["start"]) if isinstance(r["start"], str) else r["start"]
-        e_dt = parse_to_utc(r["end"]) if isinstance(r["end"], str) else r["end"]
-        formatted_watcher_offline.append({
-            "start": s_dt.astimezone(report_tz).isoformat(),
-            "end": e_dt.astimezone(report_tz).isoformat(),
-            "duration_seconds": r["duration_seconds"],
-        })
-
-    formatted_fallback = []
-    for r in fallback_ranges:
-        s_dt = parse_to_utc(r["start"]) if isinstance(r["start"], str) else r["start"]
-        e_dt = parse_to_utc(r["end"]) if isinstance(r["end"], str) else r["end"]
-        formatted_fallback.append({
-            "start": s_dt.astimezone(report_tz).isoformat(),
-            "end": e_dt.astimezone(report_tz).isoformat(),
-            "duration_seconds": r["duration_seconds"],
-        })
+    collector_offline_ranges = merge_data_quality_ranges(raw_collector_offline, report_tz=report_tz, gap_threshold_seconds=60.0)
+    formatted_watcher_offline = merge_data_quality_ranges(watcher_offline_ranges, report_tz=report_tz, gap_threshold_seconds=60.0)
+    formatted_fallback = merge_data_quality_ranges(fallback_ranges, report_tz=report_tz, gap_threshold_seconds=60.0)
 
     # Focus blocks (PC timeline)
     pc_timeline_events = pc_events + fallback_events
@@ -1761,11 +2052,11 @@ def aggregate_events(
 
     # Screen activity boundaries (screen activity only)
     first_screen_activity = (
-        min(s[0] for s in screen_intervals).astimezone(report_tz).isoformat()
+        format_iso_seconds(min(s[0] for s in screen_intervals), report_tz)
         if screen_intervals else None
     )
     last_screen_activity = (
-        max(s[1] for s in screen_intervals).astimezone(report_tz).isoformat()
+        format_iso_seconds(max(s[1] for s in screen_intervals), report_tz)
         if screen_intervals else None
     )
 
@@ -1809,8 +2100,8 @@ def aggregate_events(
         analysis_text, calc_date_str, report_tz=report_tz
     )
     resolved_labels = resolve_label_intervals(raw_label_intervals)
-    label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, overlay_warnings = overlay_labels_on_screen_time(
-        screen_intervals, resolved_labels
+    label_totals, labeled_seconds, unlabeled_seconds, label_coverage_pct, overlay_warnings, label_segments = overlay_labels_on_screen_time(
+        screen_intervals, resolved_labels, report_tz=report_tz
     )
     label_warnings = parse_warnings + overlay_warnings
 
@@ -1822,25 +2113,48 @@ def aggregate_events(
         source = s["source"]
         ctx = s.get("context", {})
         cleaned_ctx = clean_context_for_report(source, ctx)
+        s_int = s["start_dt"]
+        e_int = s["end_dt"]
+        entry_span = (e_int - s_int).total_seconds()
+        eff_dur = entry_span if entry_span > 0 else dur
+
+        # Compute overlap duration for each label covering this entry
+        lbl_durations = defaultdict(float)
+        for lbl in resolved_labels:
+            l_s = lbl["start_dt"]
+            l_e = lbl["end_dt"]
+            int_s = max(s_int, l_s)
+            int_e = min(e_int, l_e)
+            if int_e > int_s:
+                target_key = lbl["label"] if lbl["label"] in allowed_set else "other"
+                lbl_durations[target_key] += (int_e - int_s).total_seconds()
 
         if source == "manual":
-            entry_label = None
-        else:
-            s_int = s["start_dt"]
-            e_int = s["end_dt"]
-            matching_labels = [
-                lbl["label"] for lbl in resolved_labels
-                if lbl["start_dt"] <= s_int and lbl["end_dt"] >= e_int
-            ]
-            if len(matching_labels) == 1:
-                matched = matching_labels[0]
-                entry_label = matched if matched in allowed_set else "other"
+            # Auto-infer offline label from activity name and category if no explicit label covers >= 80%
+            act_name = ctx.get("activity", "")
+            act_cat = ctx.get("category", "")
+            if lbl_durations:
+                best_label, best_sec = max(lbl_durations.items(), key=lambda x: x[1])
+                if eff_dur > 0 and (best_sec / eff_dur) >= 0.7999:
+                    entry_label = best_label
+                else:
+                    offline_lbl = infer_offline_label(act_name, act_cat)
+                    entry_label = offline_lbl if offline_lbl else "mixed"
             else:
+                entry_label = infer_offline_label(act_name, act_cat)
+        else:
+            if not lbl_durations:
                 entry_label = "unlabeled"
+            else:
+                best_label, best_sec = max(lbl_durations.items(), key=lambda x: x[1])
+                if eff_dur > 0 and (best_sec / eff_dur) >= 0.7999:
+                    entry_label = best_label
+                else:
+                    entry_label = "mixed"
 
         timeline.append({
-            "start": s["start_dt"].astimezone(report_tz).isoformat(),
-            "end": s["end_dt"].astimezone(report_tz).isoformat(),
+            "start": format_iso_seconds(s["start_dt"], report_tz),
+            "end": format_iso_seconds(s["end_dt"], report_tz),
             "duration_seconds": round(dur, 1),
             "source": source,
             "context": cleaned_ctx,
@@ -1863,22 +2177,19 @@ def aggregate_events(
             "total_accounted_seconds": round(total_accounted_seconds, 1),
             "unobserved_seconds": round(unobserved_seconds, 1),
             "session_count": len(logical_sessions),
-            "first_activity": earliest_start.astimezone(report_tz).isoformat(),
-            "last_activity": latest_end.astimezone(report_tz).isoformat(),
+            "first_activity": format_iso_seconds(earliest_start, report_tz) if earliest_start else None,
+            "last_activity": format_iso_seconds(latest_end, report_tz) if latest_end else None,
             "observed_span_seconds": round(observed_span_seconds, 1),
         },
         "daily_metrics": daily_metrics,
         "labels": {
             "energy": energy,
-            "label_totals": label_totals,
-            "labeled_seconds": labeled_seconds,
-            "unlabeled_seconds": unlabeled_seconds,
-            "label_coverage_pct": label_coverage_pct,
         },
         "label_totals": label_totals,
         "labeled_seconds": labeled_seconds,
         "unlabeled_seconds": unlabeled_seconds,
         "label_coverage_pct": label_coverage_pct,
+        "label_segments": label_segments,
         "data_quality": {
             "sources_present": sorted(list(set(e.get("source") for e in events if e.get("source")))),
             "last_mobile_sync": last_mobile_sync,
@@ -1959,15 +2270,12 @@ def _empty_report(date_str: Optional[str] = None, report_tz: Optional[timezone] 
         },
         "labels": {
             "energy": None,
-            "label_totals": empty_label_totals,
-            "labeled_seconds": 0.0,
-            "unlabeled_seconds": 0.0,
-            "label_coverage_pct": 0.0,
         },
         "label_totals": empty_label_totals,
         "labeled_seconds": 0.0,
         "unlabeled_seconds": 0.0,
         "label_coverage_pct": 0.0,
+        "label_segments": [],
         "data_quality": {
             "sources_present": [],
             "last_mobile_sync": None,
@@ -2134,7 +2442,8 @@ def generate_single_day_report(
         data_directory=config.data_directory,
         date_str=date_str,
     )
-    report["generated_at"] = datetime.now().astimezone().isoformat()
+    report_tz = get_report_timezone(events)
+    report["generated_at"] = format_iso_seconds(datetime.now(report_tz), report_tz)
     report["date"] = date_str
     return report
 
@@ -2196,17 +2505,34 @@ def generate_range_report(
         min_session_duration=min_session_duration,
         data_directory=config.data_directory,
     )
-    report["generated_at"] = datetime.now().astimezone().isoformat()
+    report_tz = get_report_timezone(all_events)
+    report["generated_at"] = format_iso_seconds(datetime.now(report_tz), report_tz)
     report["from"] = from_date
     report["to"] = to_date
     report["daily_summary"] = daily_summaries
     return report
 
 
-def write_report(config, report: Dict[str, Any], filename: str) -> str:
-    """Safely write JSON report to structured Record/report/YYYY/mmm/daily/ directory."""
+def write_report(
+    config,
+    report: Dict[str, Any],
+    filename: str,
+    pretty: bool = False,
+) -> str:
+    """Safely write JSON report to structured Record/report/YYYY/mmm/daily/ directory.
+    
+    Writes compact JSON by default (no indent), or indented JSON if pretty=True.
+    When generating a daily report (DATE.json), also writes the lean chat report (DATE.chat.json).
+    """
     target_date_str = report.get("date")
     hierarchical_path = None
+
+    indent = 2 if pretty else None
+    separators = None if pretty else (',', ':')
+
+    is_daily = bool(target_date_str and not report.get("from") and not filename.endswith(".chat.json"))
+    chat_report = build_chat_report(report) if is_daily else None
+    chat_filename = f"{target_date_str}.chat.json" if is_daily else None
 
     if target_date_str:
         try:
@@ -2217,8 +2543,14 @@ def write_report(config, report: Dict[str, Any], filename: str) -> str:
             structured_dir.mkdir(parents=True, exist_ok=True)
             hierarchical_path = structured_dir / filename
             with open(hierarchical_path, "w", encoding="utf-8") as f:
-                json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+                json.dump(report, f, indent=indent, separators=separators, ensure_ascii=False, default=str)
             print(f"\nReport written to: {hierarchical_path}")
+
+            if is_daily and chat_report and chat_filename:
+                chat_path = structured_dir / chat_filename
+                with open(chat_path, "w", encoding="utf-8") as f:
+                    json.dump(chat_report, f, indent=indent, separators=separators, ensure_ascii=False, default=str)
+                print(f"Chat report written to: {chat_path}")
         except ValueError:
             pass
 
@@ -2229,7 +2561,15 @@ def write_report(config, report: Dict[str, Any], filename: str) -> str:
     fallback_dir.mkdir(parents=True, exist_ok=True)
     fallback_path = fallback_dir / filename
     with open(fallback_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+        json.dump(report, f, indent=indent, separators=separators, ensure_ascii=False, default=str)
+    print(f"\nReport written to: {fallback_path}")
+
+    if is_daily and chat_report and chat_filename:
+        chat_path = fallback_dir / chat_filename
+        with open(chat_path, "w", encoding="utf-8") as f:
+            json.dump(chat_report, f, indent=indent, separators=separators, ensure_ascii=False, default=str)
+        print(f"Chat report written to: {chat_path}")
+
     return str(fallback_path)
 
 
@@ -2331,9 +2671,89 @@ def print_summary(report: Dict[str, Any]):
     print("=" * 55)
 
 
+def find_all_raw_dates(data_directory: str) -> List[str]:
+    """Find all unique date strings (YYYY-MM-DD) that have raw event files."""
+    dates = set()
+    raw_dir = Path(data_directory) / "raw"
+    if not raw_dir.exists():
+        return []
+
+    # 1. Flat raw/*.jsonl
+    for p in raw_dir.glob("*.jsonl"):
+        try:
+            date.fromisoformat(p.stem)
+            dates.add(p.stem)
+        except ValueError:
+            pass
+
+    # 2. Hierarchical raw/YYYY/mmm/daily/*.jsonl
+    for p in raw_dir.glob("*/*/*/*.jsonl"):
+        try:
+            date.fromisoformat(p.stem)
+            dates.add(p.stem)
+        except ValueError:
+            pass
+
+    # 3. Mobile raw/YYYY/mmm/daily/mobile/*.jsonl
+    for p in raw_dir.glob("*/*/*/*/*.jsonl"):
+        try:
+            date.fromisoformat(p.stem)
+            dates.add(p.stem)
+        except ValueError:
+            pass
+
+    return sorted(list(dates))
+
+
+def rebuild_all_reports(
+    config,
+    merge_gap_seconds: Optional[float] = None,
+    min_session_duration: Optional[float] = None,
+    pretty: bool = False,
+) -> List[str]:
+    """Regenerate every report from raw data. Idempotent."""
+    dates = find_all_raw_dates(config.data_directory)
+    if not dates:
+        print(f"No raw activity files found in {config.data_directory}/raw")
+        return []
+
+    print(f"\n=======================================================")
+    print(f"REBUILDING ALL REPORTS ({len(dates)} dates discovered)")
+    print(f"Data directory: {config.data_directory}")
+    print(f"=======================================================")
+
+    rebuilt = []
+    for d_str in dates:
+        print(f"\nProcessing date: {d_str}...")
+        report = generate_single_day_report(
+            config,
+            d_str,
+            merge_gap_seconds=merge_gap_seconds,
+            min_session_duration=min_session_duration,
+        )
+        write_report(config, report, f"{d_str}.json", pretty=pretty)
+        rebuilt.append(d_str)
+
+    try:
+        from reporting.generate_dashboard import generate_dashboard_files
+        generate_dashboard_files(config.data_directory)
+        print("\nDashboard successfully rebuilt at: Record/report/dashboard.html")
+    except Exception as e:
+        print(f"\nNotice: Could not regenerate dashboard: {e}", file=sys.stderr)
+
+    print(f"=======================================================")
+    print(f"REBUILD COMPLETE: {len(rebuilt)} reports successfully regenerated.")
+    print(f"=======================================================\n")
+    return rebuilt
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate activity reports from raw JSONL data using logical sessions"
+    )
+    parser.add_argument(
+        "--rebuild-all", action="store_true",
+        help="Regenerate every daily report from raw data and update dashboard (idempotent).",
     )
     parser.add_argument(
         "--date",
@@ -2363,6 +2783,10 @@ def main():
         "--min-duration", dest="min_duration", type=float, default=None,
         help="Minimum session duration in seconds to include in report (default from config or 40.0)",
     )
+    parser.add_argument(
+        "--pretty", action="store_true",
+        help="Format JSON reports with indent=2 (default is compact without indentation)",
+    )
 
     args = parser.parse_args()
 
@@ -2376,6 +2800,10 @@ def main():
     min_dur = args.min_duration
     if min_dur is None:
         min_dur = getattr(config, "min_duration_seconds", 40.0)
+
+    if args.rebuild_all:
+        rebuild_all_reports(config, merge_gap_seconds=merge_gap, min_session_duration=min_dur, pretty=args.pretty)
+        return
 
     is_weekly = False
     if args.weekly:
@@ -2413,7 +2841,7 @@ def main():
         report = generate_single_day_report(config, target_date, merge_gap_seconds=merge_gap, min_session_duration=min_dur)
         filename = f"{target_date}.json"
 
-    write_report(config, report, filename)
+    write_report(config, report, filename, pretty=args.pretty)
     print_summary(report)
 
     # Automatically regenerate dashboard HTML so the new report is immediately visualised

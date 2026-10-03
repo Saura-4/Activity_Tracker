@@ -16,15 +16,16 @@ let stateLoaded = false;  // Guard: block event handlers until state is restored
 // Debounce timer for title changes
 let titleDebounceTimer = null;
 
-// ── HEARTBEAT ──────────────────────────────────────────────────────────
+// ── HEARTBEAT & CHUNKING ──────────────────────────────────────────────────
 // The heartbeat is a rolling timestamp updated every HEARTBEAT_INTERVAL_MS
 // while a session is live AND the browser window is actually focused.
 // When ending a session, if (now - lastHeartbeat) > STALE_THRESHOLD_MS,
 // the session end is CAPPED at lastHeartbeat instead of "now",
 // preventing ghost sessions from OS sleep, minimized windows, etc.
-const HEARTBEAT_INTERVAL_MS = 15_000;       // 15 seconds
-const STALE_THRESHOLD_MS    = 90_000;       // 90 seconds of no heartbeat → stale
-const MAX_SESSION_DURATION_S = 3600;        // Hard cap: 1 hour per raw event
+const HEARTBEAT_INTERVAL_MS = 15_000;       // 15 seconds fast active check
+const STALE_THRESHOLD_MS    = 180_000;      // 3 minutes (allows for alarm jitter/throttling)
+const CHUNK_DURATION_S      = 300;          // 5 minutes: long sessions flush chunks incrementally
+const MAX_SESSION_DURATION_S = 3600;        // Hard safety cap: 1 hour per raw event
 const HEARTBEAT_ALARM_NAME  = 'session-heartbeat';
 
 // Initialization
@@ -34,44 +35,13 @@ async function init() {
   stateLoaded = true;
   
   // Register alarm for periodic heartbeat (survives service worker suspension)
-  chrome.alarms.create(HEARTBEAT_ALARM_NAME, { periodInMinutes: 0.25 }); // Every 15 seconds
+  chrome.alarms.create(HEARTBEAT_ALARM_NAME, { periodInMinutes: 0.5 });
 
   // Flush any offline queued events immediately
   processQueue();
   
-  try {
-    const win = await chrome.windows.getCurrent();
-    if (win && win.focused) {
-      const tabs = await chrome.tabs.query({ active: true, windowId: win.id });
-      if (tabs.length > 0) {
-        const activeTab = tabs[0];
-        if (currentSession && activeTab.id === currentSession.tabId) {
-          const processed = processUrl(activeTab.url);
-          if (processed && processed.url === currentSession.url) {
-            // Session still valid — but validate it isn't stale from a previous wake
-            const staleness = Date.now() - (currentSession.lastHeartbeat || new Date(currentSession.start).getTime());
-            if (staleness > STALE_THRESHOLD_MS) {
-              // Stale session from before sleep/restart — end it capped, start fresh
-              await endCurrentSession();
-              await startSession(activeTab, win.id);
-            } else {
-              // Still fresh, continue and refresh heartbeat
-              currentSession.lastHeartbeat = Date.now();
-              await saveState();
-            }
-            return;
-          }
-        }
-        await endCurrentSession();
-        await startSession(activeTab, win.id);
-        return;
-      }
-    }
-    // Browser not focused or no active tab
-    await endCurrentSession();
-  } catch (err) {
-    console.error('Error during init:', err);
-  }
+  // Synchronize state immediately upon worker startup
+  await checkActiveSession();
 }
 
 // Load settings from storage
@@ -124,6 +94,14 @@ function processUrl(rawUrl) {
     return { url: rawUrl, domain: 'unknown' };
   }
 
+  // Handle local file URLs
+  if (urlObj.protocol === 'file:') {
+    return {
+      url: rawUrl,
+      domain: 'local-file'
+    };
+  }
+
   const isInternal = urlObj.protocol.includes('chrome') || urlObj.protocol.includes('about');
   if (isInternal && !settings.trackInternal) {
     return null; // Skip tracking
@@ -157,7 +135,7 @@ async function startSession(tab, windowId) {
     await endCurrentSession();
   }
 
-  if (!tab || tab.url === '') {
+  if (!tab || !tab.url) {
     return;
   }
 
@@ -245,6 +223,96 @@ async function endCurrentSession(explicitEndTime = null) {
   await saveState();
 }
 
+// Check and synchronize tracking session with the currently focused Chrome window
+async function checkActiveSession() {
+  if (!stateLoaded) return;
+
+  try {
+    let win = null;
+    try {
+      win = await chrome.windows.getLastFocused({ populate: false });
+    } catch (e) {
+      try {
+        const wins = await chrome.windows.getAll({ populate: false });
+        win = wins.find(w => w.focused) || null;
+      } catch (err) {}
+    }
+
+    const isChromeFocused = win && win.focused && win.state !== 'minimized' && win.id !== chrome.windows.WINDOW_ID_NONE;
+
+    if (!isChromeFocused) {
+      // Browser is not the focused foreground window
+      if (currentSession) {
+        await endCurrentSession();
+      }
+      return;
+    }
+
+    // Browser is focused. Query active tab in this window.
+    const tabs = await chrome.tabs.query({ active: true, windowId: win.id });
+    if (!tabs || tabs.length === 0 || !tabs[0].url) {
+      if (currentSession) {
+        await endCurrentSession();
+      }
+      return;
+    }
+
+    const activeTab = tabs[0];
+    const processed = processUrl(activeTab.url);
+    if (!processed) {
+      // Internal or excluded page
+      if (currentSession) {
+        await endCurrentSession();
+      }
+      return;
+    }
+
+    const now = Date.now();
+
+    // Check if continuing current session
+    if (currentSession && currentSession.tabId === activeTab.id && currentSession.url === processed.url) {
+      const staleness = now - (currentSession.lastHeartbeat || new Date(currentSession.start).getTime());
+      if (staleness > STALE_THRESHOLD_MS) {
+        // Gap indicates sleep or system suspend: end old session capped at last heartbeat, start fresh
+        await endCurrentSession();
+        await startSession(activeTab, win.id);
+        return;
+      }
+
+      // Update in-place properties if changed
+      if (activeTab.title && activeTab.title !== currentSession.title) {
+        currentSession.title = activeTab.title;
+      }
+      if (activeTab.audible !== undefined) {
+        currentSession.audible = currentSession.audible || activeTab.audible;
+      }
+
+      currentSession.lastHeartbeat = now;
+
+      // Flush long sessions incrementally every CHUNK_DURATION_S (300s = 5m)
+      const sessionAge = (now - new Date(currentSession.start).getTime()) / 1000;
+      if (sessionAge >= CHUNK_DURATION_S) {
+        const tab = activeTab;
+        const wid = win.id;
+        await endCurrentSession(now);
+        await startSession(tab, wid);
+        return;
+      }
+
+      await saveState();
+      return;
+    }
+
+    // Active tab or URL changed, or no currentSession existed
+    if (currentSession) {
+      await endCurrentSession();
+    }
+    await startSession(activeTab, win.id);
+  } catch (err) {
+    console.error('Error in checkActiveSession:', err);
+  }
+}
+
 // Send queued events to collector
 async function processQueue() {
   if (isProcessingQueue || eventQueue.length === 0) return;
@@ -286,62 +354,20 @@ setInterval(() => {
   processQueue();
 }, 30000);
 
+// Fast 15-second heartbeat while service worker is active
+setInterval(() => {
+  if (stateLoaded) {
+    checkActiveSession();
+  }
+}, HEARTBEAT_INTERVAL_MS);
+
 // ── ALARM-BASED HEARTBEAT ──────────────────────────────────────────────
 // chrome.alarms survive service worker suspension (unlike setInterval).
-// Every 15 seconds: check if we have an active session and if Chrome is
-// still the focused window. If yes, bump the heartbeat. If not, end session.
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== HEARTBEAT_ALARM_NAME) return;
   if (!stateLoaded) return;
-  if (!currentSession) return;
-
-  try {
-    // Check 1: Is our window still focused?
-    const win = await chrome.windows.get(currentSession.windowId);
-    if (!win || !win.focused) {
-      // Chrome window lost focus without onFocusChanged firing (common on Windows)
-      await endCurrentSession();
-      return;
-    }
-
-    // Check 2: Is the window minimized?
-    if (win.state === 'minimized') {
-      await endCurrentSession();
-      return;
-    }
-
-    // Check 3: Is the tab still active?
-    const tabs = await chrome.tabs.query({ active: true, windowId: currentSession.windowId });
-    if (!tabs.length || tabs[0].id !== currentSession.tabId) {
-      // Active tab changed without onActivated firing
-      await endCurrentSession();
-      if (tabs.length > 0) {
-        await startSession(tabs[0], currentSession?.windowId || win.id);
-      }
-      return;
-    }
-
-    // All good — bump heartbeat
-    currentSession.lastHeartbeat = Date.now();
-
-    // Check for max session duration (split long sessions into chunks)
-    const sessionAge = (Date.now() - new Date(currentSession.start).getTime()) / 1000;
-    if (sessionAge >= MAX_SESSION_DURATION_S) {
-      // End current and immediately start a new one for the same tab
-      const tab = tabs[0];
-      const wid = currentSession.windowId;
-      await endCurrentSession();
-      await startSession(tab, wid);
-      return;
-    }
-
-    await saveState();
-  } catch (e) {
-    // Window/tab might have been closed
-    await endCurrentSession();
-  }
+  await checkActiveSession();
 });
-
 
 // --- Event Listeners ---
 
@@ -353,31 +379,21 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
     // Browser lost focus entirely
     await endCurrentSession();
   } else {
-    // Browser gained focus, start session for active tab
-    try {
-      const tabs = await chrome.tabs.query({ active: true, windowId: windowId });
-      if (tabs.length > 0) {
-        await startSession(tabs[0], windowId);
-      }
-    } catch (e) {
-      // Window might have closed or not accessible
-    }
+    // Browser gained focus, sync session
+    await checkActiveSession();
   }
 });
 
 // Tab activated (switched)
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
   if (!stateLoaded) return;
+  await checkActiveSession();
+});
 
-  try {
-    const win = await chrome.windows.get(activeInfo.windowId);
-    if (win && win.focused) {
-      const tab = await chrome.tabs.get(activeInfo.tabId);
-      await startSession(tab, activeInfo.windowId);
-    }
-  } catch (e) {
-    // Tab or window might be closing
-  }
+// Tab highlighted (clicked active tab or switched tab selection)
+chrome.tabs.onHighlighted.addListener(async (highlightInfo) => {
+  if (!stateLoaded) return;
+  await checkActiveSession();
 });
 
 // Tab updated (URL navigation or in-place title update)
@@ -402,27 +418,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await saveState();
   }
 
-  try {
-    const win = await chrome.windows.get(tab.windowId);
-    if (!win || !win.focused) return;
-
-    if (currentSession && currentSession.tabId === tabId) {
-      const processed = processUrl(tab.url);
-      const urlChanged = processed && processed.url !== currentSession.url;
-
-      if (urlChanged) {
-        // Navigated to a different URL -> start new session
-        await startSession(tab, tab.windowId);
-      } else if (tab.title && tab.title !== currentSession.title) {
-        // Same page, title dynamically updated -> update title in place
-        currentSession.title = tab.title;
-        currentSession.lastHeartbeat = Date.now(); // User interaction implied
-        await saveState();
-      }
-    } else {
-      await startSession(tab, tab.windowId);
-    }
-  } catch (e) {}
+  if (changeInfo.url || changeInfo.title || changeInfo.status === 'complete') {
+    await checkActiveSession();
+  }
 });
 
 // Tab closed
@@ -489,21 +487,7 @@ if (chrome.idle) {
       if (currentSession) {
         currentSession.audibleIdleStart = null;
       }
-      try {
-        const win = await chrome.windows.getCurrent();
-        if (win && win.focused) {
-          const tabs = await chrome.tabs.query({ active: true, windowId: win.id });
-          if (tabs.length > 0) {
-            if (!currentSession || currentSession.tabId !== tabs[0].id) {
-              await startSession(tabs[0], win.id);
-            } else {
-              // Same tab, refresh heartbeat
-              currentSession.lastHeartbeat = Date.now();
-              await saveState();
-            }
-          }
-        }
-      } catch (e) {}
+      await checkActiveSession();
     }
   });
 }
