@@ -1,13 +1,77 @@
+import contextlib
 import json
+import os
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, Iterator, List, Optional
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _recent_ids: OrderedDict = OrderedDict()
 _current_date = None
+
+_RAW_LOCK_FILENAME = ".raw_write.lock"
+
+
+@contextlib.contextmanager
+def raw_write_lock(data_directory: Optional[str]) -> Iterator[None]:
+    """Cross-process + cross-thread exclusive lock for raw/manual file writes.
+
+    append_event uses threading _lock only, which does NOT protect against
+    standalone processes (sync_mobile.bat, generate_report.bat) rewriting the
+    same JSONL while an append lands in the old inode and gets discarded.
+    Hold this around every read-modify-write AND every append.
+    Always acquire threading _lock first, file lock second (consistent order).
+    """
+    _lock.acquire()
+    f = None
+    lock_path: Optional[Path] = None
+    try:
+        if data_directory:
+            try:
+                lock_path = Path(data_directory) / _RAW_LOCK_FILENAME
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                f = open(lock_path, "a+", encoding="utf-8")
+                if os.name == "nt":
+                    import msvcrt
+                    # Blocking with timeout (append handlers time out after ~1s,
+                    # rewrite holds it only for ms).
+                    deadline = time.monotonic() + 10.0
+                    while True:
+                        try:
+                            f.seek(0)
+                            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+                            break
+                        except OSError:
+                            if time.monotonic() >= deadline:
+                                raise TimeoutError(f"Timed out acquiring raw write lock {lock_path}")
+                            time.sleep(0.02)
+                else:
+                    import fcntl
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except (TimeoutError, OSError):
+                raise
+            except Exception:
+                f = None
+        yield
+    finally:
+        try:
+            if f is not None:
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        f.seek(0)
+                        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+                f.close()
+        finally:
+            _lock.release()
 
 def get_file_path(data_dir: str, dt: datetime) -> Path:
     date_str = dt.strftime("%Y-%m-%d")
@@ -26,9 +90,9 @@ def append_event(config, event_data: Dict[str, Any]) -> bool:
         return False
 
     start_dt = datetime.fromisoformat(event_data["start"].replace('Z', '+00:00')).astimezone()
-    date_str = start_dt.strftime("%Y-%m-%d")
-    
-    with _lock:
+
+    data_dir = getattr(config, "data_directory", None) if config else None
+    with raw_write_lock(data_dir):
         evt_id = event_data["id"]
         if evt_id in _recent_ids:
             old_dur = _recent_ids[evt_id]
@@ -37,17 +101,17 @@ def append_event(config, event_data: Dict[str, Any]) -> bool:
                 pass
             else:
                 return False # Duplicate or older checkpoint
-            
+
         file_path = get_file_path(config.data_directory, start_dt)
-        
+
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event_data) + "\n")
-            
+
         _recent_ids[evt_id] = dur
         if len(_recent_ids) > 10000:
             while len(_recent_ids) > 5000:
                 _recent_ids.popitem(last=False)
-            
+
     return True
 
 def read_events(config, date_str: str) -> List[Dict[str, Any]]:

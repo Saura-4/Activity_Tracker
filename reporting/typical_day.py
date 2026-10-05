@@ -22,10 +22,12 @@ ALLOWED_LABELS = [
     "career",
     "comms",
     "leisure",
+    "wasted",
     "rest",
     "eat",
     "walk",
     "social",
+    "misc",
     "other",
 ]
 
@@ -372,6 +374,26 @@ def compute_day_bins_cache(
         pc_sec[b] = min(bin_width_sec, pc_sec[b])
         mobile_sec[b] = min(bin_width_sec, mobile_sec[b])
 
+    # Manual offline labels (misc, wasted, rest, ...) are never in screen
+    # segments, so project them directly — and as unplanned, since manual
+    # entries carry no planned flag.
+    for entry in timeline:
+        if entry.get("source") != "manual":
+            continue
+        lbl = entry.get("label")
+        if not lbl or lbl not in label_sec:
+            continue
+        s_sec = time_str_to_seconds(entry.get("start"))
+        dur = float(entry.get("duration_seconds", 0.0))
+        if s_sec is None or dur <= 0:
+            continue
+        overlaps = project_interval_to_bins(s_sec, s_sec + dur, bin_minutes=bin_minutes, axis_start_hour=0)
+        for b in range(total_bins):
+            ov = overlaps[b]
+            if ov > 0:
+                label_sec[lbl][b] += ov
+                unplanned_label_sec[lbl][b] += ov
+
     # Label projection: prefer precise time-slice segments if present, else fallback to timeline entries
     segments = report.get("label_segments") or report.get("labels", {}).get("segments")
     if segments:
@@ -395,6 +417,8 @@ def compute_day_bins_cache(
                         unplanned_label_sec[lbl][b] += ov
     else:
         for entry in timeline:
+            if entry.get("source") == "manual":
+                continue  # already projected above
             lbl = entry.get("label")
             if not lbl or lbl not in label_sec:
                 continue
@@ -973,10 +997,11 @@ def aggregate_focus_vs_drift(
     unplanned_only: bool = True,
 ) -> Dict[str, Any]:
     """Aggregate Focus vs Drift layer for Typical Day.
-    
+
     Focus: build + practice + learn
-    Drift: leisure (unplanned only if unplanned_only=True, else all leisure)
-    Neutral: stay-current + career + comms + other (+ planned leisure if unplanned_only=True)
+    Drift: leisure + wasted (unplanned only if unplanned_only=True, else all leisure + wasted)
+    Neutral: stay-current + career + comms + other + misc + rest + eat + walk + social
+             (+ planned leisure/wasted if unplanned_only=True)
     Unlabeled: remaining screen time
     
     Only days with coverage >= min_coverage_pct count.
@@ -1031,27 +1056,32 @@ def aggregate_focus_vs_drift(
             for b in range(total_bins):
                 f_sec[b] += arr[b]
 
-        # Drift: leisure
+        # Drift: leisure + wasted
         d_sec = [0.0] * total_bins
+        drift_keys = ["leisure", "wasted"]
         if unplanned_only:
-            arr = rotate(d.get("unplanned_label_seconds", {}).get("leisure", [0.0] * total_bins))
-            for b in range(total_bins):
-                d_sec[b] += arr[b]
+            for d_lbl in drift_keys:
+                arr = rotate(d.get("unplanned_label_seconds", {}).get(d_lbl, [0.0] * total_bins))
+                for b in range(total_bins):
+                    d_sec[b] += arr[b]
         else:
-            arr = rotate(d["label_seconds"].get("leisure", [0.0] * total_bins))
-            for b in range(total_bins):
-                d_sec[b] += arr[b]
+            for d_lbl in drift_keys:
+                arr = rotate(d["label_seconds"].get(d_lbl, [0.0] * total_bins))
+                for b in range(total_bins):
+                    d_sec[b] += arr[b]
 
-        # Neutral: stay-current, career, comms, other, rest, eat, walk, social (+ planned leisure if unplanned_only)
+        # Neutral: stay-current, career, comms, other, misc, rest, eat, walk, social
+        # (+ planned leisure/wasted if unplanned_only)
         neut_sec = [0.0] * total_bins
-        for n_lbl in ["stay-current", "career", "comms", "other", "rest", "eat", "walk", "social"]:
+        for n_lbl in ["stay-current", "career", "comms", "other", "misc", "rest", "eat", "walk", "social"]:
             arr = rotate(d["label_seconds"].get(n_lbl, [0.0] * total_bins))
             for b in range(total_bins):
                 neut_sec[b] += arr[b]
         if unplanned_only:
-            arr = rotate(d.get("planned_label_seconds", {}).get("leisure", [0.0] * total_bins))
-            for b in range(total_bins):
-                neut_sec[b] += arr[b]
+            for p_lbl in ["leisure", "wasted"]:
+                arr = rotate(d.get("planned_label_seconds", {}).get(p_lbl, [0.0] * total_bins))
+                for b in range(total_bins):
+                    neut_sec[b] += arr[b]
 
         # Unlabeled: screen time minus all labeled time in bin
         u_sec = [0.0] * total_bins

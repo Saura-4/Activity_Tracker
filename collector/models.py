@@ -36,9 +36,26 @@ def validate_and_create_event(data: Dict[str, Any], strip_queries: bool = True) 
     
     ctx = data["context"].copy()
     if data["source"] == "browser" and strip_queries and "url" in ctx:
-        parsed = urlparse(ctx["url"])
-        stripped = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
-        ctx["url"] = stripped
+        try:
+            from urllib.parse import parse_qsl, urlencode
+            parsed = urlparse(ctx["url"])
+            host = (parsed.netloc or "").lower()
+            is_youtube = "youtube.com" in host or "youtu.be" in host
+            if is_youtube:
+                # Preserve video identity (?v=, list, search_query) so distinct
+                # videos never collapse into https://www.youtube.com/watch.
+                q = dict(parse_qsl(parsed.query))
+                keep = {k: q[k] for k in ("v", "list", "t", "s", "search_query", "q") if k in q}
+                new_q = urlencode(keep)
+                stripped = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", new_q, ""))
+                ctx["url"] = stripped
+            else:
+                stripped = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+                ctx["url"] = stripped
+        except Exception:
+            parsed = urlparse(ctx["url"])
+            stripped = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+            ctx["url"] = stripped
         
     return Event(
         id=evt_id,

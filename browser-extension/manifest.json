@@ -4,6 +4,10 @@
   "version": "1.0.0",
   "description": "Local activity tracking for browser tabs",
   "permissions": ["tabs", "storage", "windows", "activeTab", "idle", "alarms"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Activity Tracker — title/URL redaction"
+  },
   "background": {
     "service_worker": "background.js"
   },

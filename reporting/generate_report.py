@@ -1056,8 +1056,19 @@ def build_pc_timeline(
                     pc_timeline_events.append(evt)
 
             elif app_type in ("chrome", "brave", "edge"):
-                # Requirement 5: Any browser extension event fills any browser foreground window
-                matching = browser_events
+                # Prefer same-browser extension events (brave window <- brave events).
+                # Old behaviour ("any fills any") mixed Chrome events into Brave
+                # windows when both browsers run. Fall back to all only if no
+                # same-browser events exist (e.g. Edge reports as chrome).
+                def _evt_browser(e):
+                    try:
+                        return (e.get("context", {}).get("browser") or "").lower()
+                    except Exception:
+                        return ""
+                same = [e for e in browser_events if _evt_browser(e) == app_type]
+                if app_type == "edge" and not same:
+                    same = [e for e in browser_events if _evt_browser(e) in ("edge", "chrome")]
+                matching = same if same else browser_events
 
                 # Requirement 2: Browser media hands-off audible video overrides idle up to cap
                 is_media_window = False
@@ -1460,6 +1471,11 @@ def parse_labels_from_markdown(
         if not lbl:
             warnings.append(f"Label item #{idx} missing 'label' name")
             continue
+        # Forgiving aliases for the wasted / misc labels
+        if lbl in ("time wasted", "timewasted", "timeswasted", "time-wasted", "waste"):
+            lbl = "wasted"
+        elif lbl in ("miscellaneous", "misc.", "chores", "errands"):
+            lbl = "misc"
 
         start_str = str(item.get("start", "")).strip()
         end_str = str(item.get("end", "")).strip()
@@ -2130,18 +2146,22 @@ def aggregate_events(
                 lbl_durations[target_key] += (int_e - int_s).total_seconds()
 
         if source == "manual":
-            # Auto-infer offline label from activity name and category if no explicit label covers >= 80%
+            # Manual ground truth wins: the offline meaning (rest/eat/walk/social/wasted/misc)
+            # always beats any overlapping screen label. Screen labels only apply
+            # when the activity has no inferable offline meaning.
             act_name = ctx.get("activity", "")
             act_cat = ctx.get("category", "")
-            if lbl_durations:
+            offline_lbl = infer_offline_label(act_name, act_cat)
+            if offline_lbl:
+                entry_label = offline_lbl
+            elif lbl_durations:
                 best_label, best_sec = max(lbl_durations.items(), key=lambda x: x[1])
                 if eff_dur > 0 and (best_sec / eff_dur) >= 0.7999:
                     entry_label = best_label
                 else:
-                    offline_lbl = infer_offline_label(act_name, act_cat)
-                    entry_label = offline_lbl if offline_lbl else "mixed"
+                    entry_label = "mixed"
             else:
-                entry_label = infer_offline_label(act_name, act_cat)
+                entry_label = None
         else:
             if not lbl_durations:
                 entry_label = "unlabeled"

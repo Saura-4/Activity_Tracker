@@ -289,7 +289,7 @@ def main():
         if default_suggestion:
             prompt_str = f"  Label [default: {default_suggestion}] (Enter=skip, q=quit): "
         else:
-            prompt_str = "  Label (e.g. 'Afternoon nap', 'Dinner') (Enter=skip, q=quit): "
+            prompt_str = "  Label (e.g. 'Afternoon nap', 'Dinner', 'Time wasted', 'Miscellaneous') (Enter=skip, q=quit): "
 
         try:
             choice = input(prompt_str).strip()

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 280px; margin: 0; padding: 14px; background: #0c0e16; color: #e2e8f0;
+         font-family: system-ui, -apple-system, sans-serif; font-size: 13px; }
+  h1 { font-size: 13px; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #10b981; }
+  #dot.on { background: #dc2626; }
+  #status { color: #94a3b8; font-size: 12px; margin-bottom: 10px; }
+  #status b { color: #f87171; }
+  input { width: 100%; box-sizing: border-box; background: #090a0f; color: #fff;
+          border: 1px solid rgba(255,255,255,.12); border-radius: 8px;
+          padding: 8px 10px; font-size: 13px; margin-bottom: 10px; }
+  input:focus { outline: none; border-color: #dc2626; }
+  input:disabled { opacity: .5; }
+  button { width: 100%; padding: 9px; border-radius: 8px; border: none; cursor: pointer;
+           font-size: 13px; font-weight: 600; }
+  #toggleBtn.start { background: #dc2626; color: #fff; }
+  #toggleBtn.stop { background: rgba(220,38,38,.15); color: #f87171;
+                   border: 1px solid rgba(220,38,38,.4); }
+  button:disabled { opacity: .5; cursor: default; }
+  #err { color: #f87171; font-size: 12px; min-height: 16px; margin-top: 8px; }
+  #note { color: #64748b; font-size: 11px; margin-top: 8px; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <h1><span id="dot"></span>Title / URL redaction</h1>
+  <div id="status">Loading…</div>
+  <input id="activity" type="text" maxlength="120"
+         placeholder='What are you doing? e.g. studying F1 aero'>
+  <button id="toggleBtn" class="start">Start redacting</button>
+  <div id="err"></div>
+  <div id="note">While on, time is still tracked but tabs are logged only as your text (no titles, no URLs, no domains). Already-recorded history is not changed.</div>
+  <script src="popup.js"></script>
+</body>
+</html>

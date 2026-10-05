@@ -2537,9 +2537,20 @@ class TestOfflineLabels:
         from collector.manual_storage import infer_offline_label
 
         assert infer_offline_label("Gym", "health") is None
-        assert infer_offline_label("Shower", "personal") is None
         assert infer_offline_label("Reading a book", "offline_study") is None
-        assert infer_offline_label("Commute", "commute") is None
+
+    def test_infer_offline_label_misc(self):
+        """Must-do obligations (chores, errands, commute) infer 'misc' label."""
+        from collector.manual_storage import infer_offline_label
+
+        assert infer_offline_label("Shower", "personal") == "misc"
+        assert infer_offline_label("Evening chores", "") == "misc"
+        assert infer_offline_label("Grocery errands", "") == "misc"
+        assert infer_offline_label("Commute", "commute") == "misc"
+        assert infer_offline_label("Morning commute", "") == "misc"
+        assert infer_offline_label("Miscellaneous", "") == "misc"
+        # Precedence preserved: eat/social keywords still win overlaps
+        assert infer_offline_label("Family dinner", "") == "eat"
 
     def test_infer_offline_label_priority_eat_over_walk(self):
         """'Evening Dinner & Walk' with meal category should be 'eat', not 'walk'."""
@@ -2608,7 +2619,7 @@ class TestOfflineLabels:
         assert manual_entries["Gym"]["label"] is None  # No offline label match
 
     def test_manual_event_label_override_by_analysis_md(self):
-        """Explicit analysis.md label overrides auto-inferred offline label for manual events."""
+        """Manual ground truth wins: auto-inferred offline label beats overlapping screen label."""
         events = [
             {
                 "id": "man-walk",
@@ -2619,7 +2630,7 @@ class TestOfflineLabels:
                 "context": {"activity": "Walk", "category": "fitness"},
             },
         ]
-        # Explicitly label the walk time as "leisure"
+        # Screen label claims the same time is "leisure"
         analysis_md = """<!-- labels
 {
   "labels": [
@@ -2630,8 +2641,8 @@ class TestOfflineLabels:
         report = aggregate_events(events, date_str="2026-10-01", analysis_text=analysis_md)
         tl = report["timeline"]
         assert len(tl) == 1
-        # Should be "leisure" from explicit override, not "walk" from auto-inference
-        assert tl[0]["label"] == "leisure"
+        # Should be "walk" from manual ground truth, not "leisure" from screen label
+        assert tl[0]["label"] == "walk"
 
     def test_offline_labels_in_allowed_labels(self):
         """Offline labels (rest, eat, walk, social) are in the global ALLOWED_LABELS."""

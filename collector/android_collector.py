@@ -555,47 +555,51 @@ def sync_mobile_activity(
                 results.append({"synced_count": 0, "total_seconds": 0.0, "apps": {}, "target_file": str(raw_file)})
                 continue
 
-            # Read existing events from raw file to support updating in-progress sessions
-            existing_events = []
-            existing_map = {}
-            if raw_file.exists():
-                with open(raw_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            ev = json.loads(line)
-                            existing_events.append(ev)
-                            if "id" in ev:
-                                existing_map[ev["id"]] = len(existing_events) - 1
-                        except Exception:
-                            pass
-
-            # Merge / update sessions
+            # Read-modify-write under the shared raw lock so concurrent
+            # collector appends (desktop/extension POSTs) cannot land in the
+            # old inode between our read and replace and get discarded.
+            # Lock is held only for this fast local section, NOT for the
+            # 20s dumpsys fetch above (HTTP handlers have ~1s timeouts).
+            from collector.storage import raw_write_lock
             updated_count = 0
             new_count = 0
-            for s in sessions:
-                sid = s["id"]
-                if sid in existing_map:
-                    idx = existing_map[sid]
-                    old_dur = float(existing_events[idx].get("duration_seconds", 0.0))
-                    new_dur = float(s["duration_seconds"])
-                    if new_dur > old_dur:
-                        existing_events[idx] = s
-                        updated_count += 1
-                else:
-                    existing_events.append(s)
-                    existing_map[sid] = len(existing_events) - 1
-                    new_count += 1
+            with raw_write_lock(cfg["data_directory"]):
+                existing_events = []
+                existing_map = {}
+                if raw_file.exists():
+                    with open(raw_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                ev = json.loads(line)
+                                existing_events.append(ev)
+                                if "id" in ev:
+                                    existing_map[ev["id"]] = len(existing_events) - 1
+                            except Exception:
+                                pass
 
-            # Atomically rewrite raw file if any changes (write to temp, then rename with retry)
-            if updated_count > 0 or new_count > 0:
-                tmp_file = str(raw_file) + ".tmp"
-                with open(tmp_file, "w", encoding="utf-8") as f:
-                    for ev in existing_events:
-                        f.write(json.dumps(ev) + "\n")
-                atomic_replace_file(tmp_file, raw_file)
+                for s in sessions:
+                    sid = s["id"]
+                    if sid in existing_map:
+                        idx = existing_map[sid]
+                        old_dur = float(existing_events[idx].get("duration_seconds", 0.0))
+                        new_dur = float(s["duration_seconds"])
+                        if new_dur > old_dur:
+                            existing_events[idx] = s
+                            updated_count += 1
+                    else:
+                        existing_events.append(s)
+                        existing_map[sid] = len(existing_events) - 1
+                        new_count += 1
+
+                if updated_count > 0 or new_count > 0:
+                    tmp_file = str(raw_file) + ".tmp"
+                    with open(tmp_file, "w", encoding="utf-8") as f:
+                        for ev in existing_events:
+                            f.write(json.dumps(ev) + "\n")
+                    atomic_replace_file(tmp_file, raw_file)
 
             # Aggregate summary of synced data for output display
             app_totals = {}

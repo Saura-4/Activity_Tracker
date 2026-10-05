@@ -6,6 +6,7 @@ Handles reading, writing, and parsing human-entered offline activities
 """
 
 import json
+import os
 import uuid
 import re
 from pathlib import Path
@@ -22,6 +23,7 @@ CATEGORY_KEYWORDS = {
     "offline_study": ["reading", "book", "paper", "study", "notes", "lecture", "whiteboard", "deep reading"],
     "commute": ["commute", "travel", "traveling", "drive", "driving", "transit", "metro", "bus", "flight"],
     "personal": ["shower", "bath", "grooming", "cleaning", "chores", "family", "errand", "errands"],
+    "wasted": ["wasted", "waste", "timepass", "time pass", "time waste", "unproductive", "procrastination", "doomscroll"],
 }
 
 def infer_category(activity_name: str) -> str:
@@ -35,9 +37,9 @@ def infer_category(activity_name: str) -> str:
 
 
 def infer_offline_label(activity_name: str, category: str = "") -> Optional[str]:
-    """Infer an offline label (rest, eat, walk, social) from activity name and category.
+    """Infer an offline label (rest, eat, walk, social, wasted, misc) from activity name and category.
 
-    Returns one of 'rest', 'eat', 'walk', 'social', or None if no match.
+    Returns one of 'rest', 'eat', 'walk', 'social', 'wasted', 'misc', or None if no match.
     Used for hybrid ingestion of manual/offline events into the label system.
     """
     act = (activity_name or "").lower().strip()
@@ -77,6 +79,28 @@ def infer_offline_label(activity_name: str, category: str = "") -> Optional[str]
         ]
     ):
         return "social"
+
+    # 5. Wasted (time wasted, timepass, doomscrolling, unproductive loitering)
+    if cat == 'wasted' or any(
+        re.search(r'\b' + re.escape(w) + r'\b', act)
+        for w in [
+            'wasted', 'waste', 'timepass', 'time pass', 'time waste',
+            'unproductive',
+        ]
+    ) or re.search(r'\bprocrastinat', act) or re.search(r'\bdoomscroll', act):
+        return "wasted"
+
+    # 6. Misc (must-do obligations: chores, errands, commute, admin —
+    #    neither productive focus nor complete waste)
+    if cat in ('personal', 'commute', 'misc') or any(
+        re.search(r'\b' + re.escape(w) + r'\b', act)
+        for w in [
+            'misc', 'miscellaneous', 'chore', 'chores', 'errand', 'errands',
+            'obligation', 'obligations', 'admin', 'paperwork',
+            'commute', 'travel',
+        ]
+    ) or re.search(r'\bclean', act) or re.search(r'\bshower|\bbath\b', act):
+        return "misc"
 
     return None
 
@@ -266,24 +290,146 @@ def save_manual_event(data_dir: str, date_str: str, event_data: Dict[str, Any]) 
     """Append a single manual event to Record/manual/YYYY/mmm/daily/YYYY-MM-DD.jsonl
     Idempotent: skips if identical event id is already present.
     """
-    m_dir = get_manual_dir(data_dir, date_str)
-    target_file = m_dir / f"{date_str}.jsonl"
+    from collector.storage import raw_write_lock
+    with raw_write_lock(data_dir):
+        m_dir = get_manual_dir(data_dir, date_str)
+        target_file = m_dir / f"{date_str}.jsonl"
 
-    existing_ids = set()
-    if target_file.exists():
+        existing_ids = set()
+        if target_file.exists():
+            with open(target_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            e = json.loads(line)
+                            if "id" in e:
+                                existing_ids.add(e["id"])
+                        except Exception:
+                            pass
+
+        if event_data.get("id") not in existing_ids:
+            with open(target_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event_data, ensure_ascii=False) + "\n")
+
+        return str(target_file)
+
+
+def _rewrite_manual_file(target_file: Path, events: List[Dict[str, Any]]) -> None:
+    """Atomically rewrite a manual JSONL file with the given events."""
+    tmp_file = str(target_file) + ".tmp"
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        for ev in events:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    for _ in range(5):
+        try:
+            os.replace(tmp_file, target_file)
+            return
+        except PermissionError:
+            import time
+            time.sleep(0.1)
+    os.replace(tmp_file, target_file)
+
+
+def _resolve_manual_file(data_dir: str, date_str: str) -> Optional[Path]:
+    """Return the manual JSONL file for date_str, checking structured then legacy paths."""
+    try:
+        d = date.fromisoformat(date_str)
+    except Exception:
+        return None
+    structured = get_manual_dir(data_dir, d) / f"{date_str}.jsonl"
+    if structured.exists():
+        return structured
+    legacy = Path(data_dir) / "manual" / f"{date_str}.jsonl"
+    if legacy.exists():
+        return legacy
+    return structured
+
+
+def delete_manual_event(data_dir: str, date_str: str, event_id: str) -> bool:
+    """Delete a manual event by id. Returns True if an event was removed."""
+    from collector.storage import raw_write_lock
+    with raw_write_lock(data_dir):
+        target_file = _resolve_manual_file(data_dir, date_str)
+        if target_file is None or not target_file.exists():
+            return False
+
+        kept = []
+        found = False
         with open(target_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
-                if line:
-                    try:
-                        e = json.loads(line)
-                        if "id" in e:
-                            existing_ids.add(e["id"])
-                    except Exception:
-                        pass
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if e.get("id") == event_id:
+                    found = True
+                    continue
+                kept.append(e)
 
-    if event_data.get("id") not in existing_ids:
-        with open(target_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event_data, ensure_ascii=False) + "\n")
+        if not found:
+            return False
 
-    return str(target_file)
+        _rewrite_manual_file(target_file, kept)
+        return True
+
+
+def update_manual_event(
+    data_dir: str,
+    date_str: str,
+    event_id: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    activity: Optional[str] = None,
+    category: Optional[str] = None,
+    notes: Optional[str] = None,
+    tz: timezone = DEFAULT_TZ,
+) -> Optional[Dict[str, Any]]:
+    """Edit a manual event by id. Only provided fields are changed.
+
+    Implemented as delete + create (event ids are deterministic hashes of
+    date/start/end/activity, so changing those fields changes the id).
+    Returns the new event dict, or None if the id was not found.
+    """
+    from collector.storage import raw_write_lock
+    with raw_write_lock(data_dir):
+        target_file = _resolve_manual_file(data_dir, date_str)
+        if target_file is None or not target_file.exists():
+            return None
+
+        existing = None
+        kept = []
+        with open(target_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if e.get("id") == event_id:
+                    existing = e
+                else:
+                    kept.append(e)
+
+        if existing is None:
+            return None
+
+        old_ctx = existing.get("context", {})
+        new_event = create_manual_event(
+            date_str=date_str,
+            start_time=start_time or existing["start"],
+            end_time=end_time or existing["end"],
+            activity=activity if activity is not None else old_ctx.get("activity", "Offline Activity"),
+            category=category if category is not None else old_ctx.get("category"),
+            notes=notes if notes is not None else old_ctx.get("notes", ""),
+            tz=tz,
+        )
+        kept.append(new_event)
+        kept.sort(key=lambda x: x.get("start", ""))
+        _rewrite_manual_file(target_file, kept)
+        return new_event

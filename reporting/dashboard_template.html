@@ -731,10 +731,12 @@
           <button onclick="toggleLabelFilter('career')" id="filter-chip-career" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#a855f7]"></span>career</button>
           <button onclick="toggleLabelFilter('comms')" id="filter-chip-comms" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#ec4899]"></span>comms</button>
           <button onclick="toggleLabelFilter('leisure')" id="filter-chip-leisure" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#f43f5e]"></span>leisure</button>
+          <button onclick="toggleLabelFilter('wasted')" id="filter-chip-wasted" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#dc2626]"></span>wasted</button>
           <button onclick="toggleLabelFilter('rest')" id="filter-chip-rest" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#818cf8]"></span>rest</button>
           <button onclick="toggleLabelFilter('eat')" id="filter-chip-eat" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#fb923c]"></span>eat</button>
           <button onclick="toggleLabelFilter('walk')" id="filter-chip-walk" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#14b8a6]"></span>walk</button>
           <button onclick="toggleLabelFilter('social')" id="filter-chip-social" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#c084fc]"></span>social</button>
+          <button onclick="toggleLabelFilter('misc')" id="filter-chip-misc" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#84cc16]"></span>misc</button>
           <button onclick="toggleLabelFilter('other')" id="filter-chip-other" class="px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-[#64748b]"></span>other</button>
         </div>
 
@@ -1214,10 +1216,12 @@
       "career": "#a855f7",
       "comms": "#ec4899",
       "leisure": "#f43f5e",
+      "wasted": "#dc2626",
       "rest": "#818cf8",
       "eat": "#fb923c",
       "walk": "#14b8a6",
       "social": "#c084fc",
+      "misc": "#84cc16",
       "other": "#64748b",
       "unlabeled": "#475569"
     };
@@ -2067,7 +2071,9 @@
       "Snacks",
       "Lunch",
       "Walk",
-      "Discussion"
+      "Discussion",
+      "Time wasted",
+      "Miscellaneous"
     ];
     let selectedPresets = new Set();
 
@@ -3980,7 +3986,7 @@
           "px-2 py-0.5 rounded-full text-xs font-medium bg-white/[0.12] text-white border border-white/[0.2] transition" :
           "px-2 py-0.5 rounded-full text-xs font-medium bg-transparent text-slate-400 hover:text-white border border-white/[0.06] transition";
       }
-      ["build", "practice", "learn", "stay-current", "career", "comms", "leisure", "other"].forEach(l => {
+      ["build", "practice", "learn", "stay-current", "career", "comms", "leisure", "wasted", "misc", "other"].forEach(l => {
         const chip = document.getElementById(`filter-chip-${l}`);
         if (chip) {
           const active = !isAll && activeLabelFilters.has(l);
@@ -4051,7 +4057,7 @@
             if (ctx && ctx.toLowerCase().includes("sleep")) {
               isSleep = true;
             }
-            // Include offline label (rest, eat, walk, social) in label layer
+            // Include offline label (rest, eat, walk, social, wasted, misc) in label layer
             if (item.label) {
               labelDurations[item.label] = (labelDurations[item.label] || 0) + oDur;
             }
@@ -4241,10 +4247,12 @@
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#a855f7]"></span> career</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#ec4899]"></span> comms</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#f43f5e]"></span> leisure</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#dc2626]"></span> wasted</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#818cf8]"></span> rest</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#fb923c]"></span> eat</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#14b8a6]"></span> walk</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#c084fc]"></span> social</span>
+            <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#84cc16]"></span> misc</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#64748b]"></span> other</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#475569]"></span> unlabeled</span>
             <span class="inline-flex items-center gap-1"><span class="w-2 h-2 rounded-sm bg-[#1e293b] border border-orange-400 border-dashed"></span> offline</span>
@@ -4934,7 +4942,7 @@
     let typicalDayCurrentLayer = "activity"; // "activity", "sleep", "device", "label", "focus_drift"
     let typicalDayUnplannedOnly = true;
     let typicalDayFocusMinCoverage = 60.0;
-    const TYPICAL_DAY_ALLOWED_LABELS = ["build", "practice", "learn", "stay-current", "career", "comms", "leisure", "rest", "eat", "walk", "social", "other"];
+    const TYPICAL_DAY_ALLOWED_LABELS = ["build", "practice", "learn", "stay-current", "career", "comms", "leisure", "wasted", "rest", "eat", "walk", "social", "misc", "other"];
     let typicalDaySelectedLabels = new Set(TYPICAL_DAY_ALLOWED_LABELS);
     const TYPICAL_DAY_CACHE = {}; // date -> precomputed canonical 96-bin arrays
 
@@ -4946,10 +4954,12 @@
       "career": "#f59e0b",
       "comms": "#6366f1",
       "leisure": "#ec4899",
+      "wasted": "#f87171",
       "rest": "#818cf8",
       "eat": "#fb923c",
       "walk": "#14b8a6",
       "social": "#c084fc",
+      "misc": "#a3e635",
       "other": "#64748b",
       "unlabeled": "#334155"
     };
@@ -5433,12 +5443,16 @@
           if (isMob) mobileSec[b] += ov;
         }
 
-        // Project manual events with offline labels into labelSec bins
+        // Project manual events with offline labels into labelSec bins.
+        // Manual entries carry no planned flag, so they count as unplanned —
+        // otherwise they vanish from Focus-vs-Drift under the default
+        // "unplanned only" toggle (which reads unplanned_label_seconds).
         if (src === "manual" && entry.label && labelSec[entry.label]) {
           for (let b = 0; b < totalBins; b++) {
             const ov = overlaps[b];
             if (ov > 0) {
               labelSec[entry.label][b] += ov;
+              unplannedLabelSec[entry.label][b] += ov;
             }
           }
         }
@@ -5473,6 +5487,7 @@
         });
       } else {
         timeline.forEach(entry => {
+          if (entry.source === "manual") return; // already projected above
           const lbl = entry.label;
           if (!lbl || !labelSec[lbl]) return;
           const isPlanned = !!entry.planned;
@@ -5715,25 +5730,26 @@
           for (let b = 0; b < targetBins; b++) fSec[b] += arr[b];
         });
 
-        // Drift: leisure
+        // Drift: leisure + wasted
         const dSec = new Array(targetBins).fill(0);
-        if (typicalDayUnplannedOnly) {
-          const arr = rotateAndDownsample(d.unplanned_label_seconds?.["leisure"]);
+        ["leisure", "wasted"].forEach(dLbl => {
+          const arr = rotateAndDownsample(
+            typicalDayUnplannedOnly ? d.unplanned_label_seconds?.[dLbl] : d.label_seconds?.[dLbl]
+          );
           for (let b = 0; b < targetBins; b++) dSec[b] += arr[b];
-        } else {
-          const arr = rotateAndDownsample(d.label_seconds?.["leisure"]);
-          for (let b = 0; b < targetBins; b++) dSec[b] += arr[b];
-        }
+        });
 
-        // Neutral: stay-current, career, comms, other, rest, eat, walk, social (+ planned leisure if unplannedOnly)
+        // Neutral: stay-current, career, comms, other, misc, rest, eat, walk, social (+ planned leisure/wasted if unplannedOnly)
         const neutSec = new Array(targetBins).fill(0);
-        ["stay-current", "career", "comms", "other", "rest", "eat", "walk", "social"].forEach(nLbl => {
+        ["stay-current", "career", "comms", "other", "misc", "rest", "eat", "walk", "social"].forEach(nLbl => {
           const arr = rotateAndDownsample(d.label_seconds?.[nLbl]);
           for (let b = 0; b < targetBins; b++) neutSec[b] += arr[b];
         });
         if (typicalDayUnplannedOnly) {
-          const arr = rotateAndDownsample(d.planned_label_seconds?.["leisure"]);
-          for (let b = 0; b < targetBins; b++) neutSec[b] += arr[b];
+          ["leisure", "wasted"].forEach(pLbl => {
+            const arr = rotateAndDownsample(d.planned_label_seconds?.[pLbl]);
+            for (let b = 0; b < targetBins; b++) neutSec[b] += arr[b];
+          });
         }
 
         // Unlabeled
@@ -6412,7 +6428,7 @@
             } else {
               cell.style.backgroundColor = "rgba(255, 255, 255, 0.02)";
             }
-            const tip = `<strong>${timeLabel}</strong><br>Avg Drift: <strong>${dMin}m</strong> (${typicalDayUnplannedOnly ? "unplanned leisure" : "all leisure"})<br>Neutral: <strong>${nMin}m</strong><br>Unlabeled (unknown): <strong>${uMin}m</strong>`;
+            const tip = `<strong>${timeLabel}</strong><br>Avg Drift: <strong>${dMin}m</strong> (${typicalDayUnplannedOnly ? "unplanned leisure + wasted" : "all leisure + wasted"})<br>Neutral: <strong>${nMin}m</strong><br>Unlabeled (unknown): <strong>${uMin}m</strong>`;
             cell.onmouseenter = () => showToast(tip.replace(/<[^>]*>?/gm, " "));
           }
         ));

@@ -2,13 +2,15 @@
 Windows Desktop Activity Watcher
 
 Monitors the active foreground window on Windows using native Win32 APIs (via ctypes).
-Ignores browsers (Chrome, Brave) and VS Code (which have dedicated rich extensions).
-Tracks all other desktop applications (Antigravity IDE, VLC, Codex, Discord, Obsidian, Terminal, etc.)
-with global idle detection (GetLastInputInfo).
+Tracks all desktop applications (Antigravity IDE, VLC, Codex, Discord, Obsidian, Terminal, etc.,
+including browser and VS Code windows, which are later reconciled with their dedicated rich
+extensions at report time in build_pc_timeline).
+Uses global idle detection (GetLastInputInfo) and emits explicit idle/locked/sleep events.
 """
 
 import sys
 import os
+import re
 import time
 import json
 import uuid
@@ -189,17 +191,21 @@ def emit_desktop_event(event: Dict[str, Any], collector_url: str, data_directory
         delivered = False
 
     # If collector is offline or not running, write to structured raw daily file
+    # under the shared raw lock so a concurrent mobile/manual rewrite in
+    # another process cannot discard this append via atomic replace.
     if not delivered:
         try:
-            start_dt = datetime.fromisoformat(event["start"].replace('Z', '+00:00'))
-            date_str = start_dt.strftime("%Y-%m-%d")
-            year = str(start_dt.year)
-            month = start_dt.strftime("%b").lower()
-            out_dir = Path(data_directory) / "raw" / year / month / "daily"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{date_str}.jsonl"
-            with open(out_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(event) + "\n")
+            from collector.storage import raw_write_lock
+            with raw_write_lock(data_directory):
+                start_dt = datetime.fromisoformat(event["start"].replace('Z', '+00:00'))
+                date_str = start_dt.strftime("%Y-%m-%d")
+                year = str(start_dt.year)
+                month = start_dt.strftime("%b").lower()
+                out_dir = Path(data_directory) / "raw" / year / month / "daily"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_file = out_dir / f"{date_str}.jsonl"
+                with open(out_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event) + "\n")
         except Exception as e:
             print(f"[DesktopWatcher] Error writing offline event: {e}", file=sys.stderr)
 
@@ -271,6 +277,7 @@ class DesktopWatcher:
                     self.current_session["title_durations"].get(self.current_session["last_title"], 0.0) + dt
                 )
                 self.current_session["last_title_time"] = now_mono
+                self.current_session["last_title_wall_dt"] = now_dt
 
             best_title = self.current_session.get("title", "")
             if self.current_session.get("title_durations"):
@@ -300,10 +307,22 @@ class DesktopWatcher:
         start_dt = self.current_session["start_dt"]
         duration = (now_dt - start_dt).total_seconds()
 
-        # Finalize title durations
+        # Finalize title durations, clamped to wall-clock elapsed so a
+        # sleep/suspend gap (monotonic keeps counting) is never credited as
+        # active title time. Without this an 8h sleep inflates the last title
+        # to 8h and it wrongly wins best_title.
         now_mono = time.monotonic()
         if "last_title" in self.current_session and "last_title_time" in self.current_session:
-            dt = max(0.0, now_mono - self.current_session["last_title_time"])
+            dt_mono = max(0.0, now_mono - self.current_session["last_title_time"])
+            last_wall = self.current_session.get("last_title_wall_dt")
+            if last_wall is not None:
+                try:
+                    dt_wall = max(0.0, (now_dt - last_wall).total_seconds())
+                except Exception:
+                    dt_wall = dt_mono
+                dt = min(dt_mono, dt_wall)
+            else:
+                dt = dt_mono
             self.current_session["title_durations"][self.current_session["last_title"]] = (
                 self.current_session["title_durations"].get(self.current_session["last_title"], 0.0) + dt
             )
@@ -467,7 +486,7 @@ class DesktopWatcher:
                 self.untracked_last_checkpoint_mono = now_mono
                 clean_ts = now_dt.isoformat().replace(":", "-").replace("+", "_")
                 self.untracked_id = f"desktop-untracked-{clean_ts}"
-            elif (now_mono - self.untracked_last_checkpoint_mono) >= 60.0:
+            elif (now_mono - self.untracked_last_checkpoint_mono) >= 300.0:
                 dur = (now_dt - self.untracked_start_dt).total_seconds()
                 if dur >= self.min_session_duration:
                     event = {
@@ -489,8 +508,18 @@ class DesktopWatcher:
         if self.untracked_start_dt:
             self._end_untracked_session(now_dt)
 
-        # Desktop sessions key on app name only, not app plus title.
-        context_key = app_name
+        # All tracked apps key on (app + title). Keying only on app merges
+        # distinct pages/videos into one 60-min session whose checkpoints share
+        # one ID — dedup then keeps only the final title (e.g. whole evening
+        # labelled "Press Conference"). Browsers normalize "(1)" counts so
+        # "(1) f1" == "f1"; other apps use the exact title.
+        _browser_procs = {"chrome.exe", "brave.exe", "msedge.exe"}
+        _is_browser = bool(proc_name and proc_name.lower() in _browser_procs)
+        if _is_browser:
+            _norm = re.sub(r"^\(\d+\)\s*", "", (title or "")).strip().lower()
+            context_key = (app_name, _norm)
+        else:
+            context_key = (app_name, title or "")
 
         if not self.current_session:
             title_durations = {title: 0.0}
@@ -506,10 +535,11 @@ class DesktopWatcher:
                 "title_durations": title_durations,
                 "last_title": title,
                 "last_title_time": now_mono,
+                "last_title_wall_dt": now_dt,
                 "last_checkpoint_mono": now_mono
             }
         elif self.current_session["key"] != context_key:
-            # Switched to different app
+            # Switched app or switched title (new video/page/doc)
             self._end_current_session()
             title_durations = {title: 0.0}
             clean_ts = now_dt.isoformat().replace(":", "-").replace("+", "_")
@@ -524,10 +554,12 @@ class DesktopWatcher:
                 "title_durations": title_durations,
                 "last_title": title,
                 "last_title_time": now_mono,
+                "last_title_wall_dt": now_dt,
                 "last_checkpoint_mono": now_mono
             }
         else:
-            # Same app: update title duration tracking if title changed
+            # Same key (same app, same normalized title): track raw title
+            # variants (e.g. "(1) f1" vs "f1") without splitting.
             if title != self.current_session["last_title"]:
                 dt = max(0.0, now_mono - self.current_session["last_title_time"])
                 self.current_session["title_durations"][self.current_session["last_title"]] = (
@@ -535,6 +567,7 @@ class DesktopWatcher:
                 )
                 self.current_session["last_title"] = title
                 self.current_session["last_title_time"] = now_mono
+                self.current_session["last_title_wall_dt"] = now_dt
                 self.current_session["title"] = title
 
             # Checkpoint session every ~60s

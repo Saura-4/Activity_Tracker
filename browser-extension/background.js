@@ -13,6 +13,35 @@ let eventQueue = [];
 let isProcessingQueue = false;
 let stateLoaded = false;  // Guard: block event handlers until state is restored
 
+// ── REDACTION MODE (privacy) ──────────────────────────────────────────
+// While on: tracker keeps running (durations, boundaries, chunking, idle
+// all behave normally) but NOTHING identifying is persisted — every session
+// stores only the user-typed activity as title, with url "" and domain
+// "private". Real tab titles/URLs live transiently in the tab query result
+// and are never written to currentSession, eventQueue, or chrome.storage.
+let privacyRedact = { on: false, activity: '', since: 0 };
+const REDACTED_DOMAIN = 'private';
+const REDACTED_URL = '';
+
+function redactedActivity() {
+  return (privacyRedact.activity || '').trim() || 'Private';
+}
+
+async function savePrivacyRedact() {
+  await chrome.storage.local.set({ privacyRedact });
+}
+
+function updatePrivacyBadge() {
+  try {
+    if (chrome.action && chrome.action.setBadgeText) {
+      chrome.action.setBadgeText({ text: privacyRedact.on ? 'P' : '' });
+      if (privacyRedact.on && chrome.action.setBadgeBackgroundColor) {
+        chrome.action.setBadgeBackgroundColor({ color: '#dc2626' });
+      }
+    }
+  } catch (e) {}
+}
+
 // Debounce timer for title changes
 let titleDebounceTimer = null;
 
@@ -54,13 +83,21 @@ async function loadSettings() {
 
 // Load session state from storage
 async function loadState() {
-  const data = await chrome.storage.local.get(['currentSession', 'eventQueue']);
+  const data = await chrome.storage.local.get(['currentSession', 'eventQueue', 'privacyRedact']);
   if (data.currentSession) {
     currentSession = data.currentSession;
   }
   if (data.eventQueue) {
     eventQueue = data.eventQueue;
   }
+  if (data.privacyRedact && typeof data.privacyRedact === 'object') {
+    privacyRedact = {
+      on: !!data.privacyRedact.on,
+      activity: String(data.privacyRedact.activity || ''),
+      since: Number(data.privacyRedact.since || 0),
+    };
+  }
+  updatePrivacyBadge();
 }
 
 // Save session state to storage
@@ -84,9 +121,12 @@ function getBrowserName() {
 }
 
 // Process URL based on settings
+// NOTE: YouTube watch URLs MUST keep ?v= (video id), otherwise distinct videos
+// collapse into a single session (https://www.youtube.com/watch) and a 60-min
+// merged block gets one title. Same for search (?search_query) and youtu.be.
 function processUrl(rawUrl) {
   if (!rawUrl) return null;
-  
+
   let urlObj;
   try {
     urlObj = new URL(rawUrl);
@@ -109,7 +149,20 @@ function processUrl(rawUrl) {
 
   let finalUrl = rawUrl;
   if (settings.stripParams) {
-    finalUrl = `${urlObj.origin}${urlObj.pathname}`;
+    const host = (urlObj.hostname || '').toLowerCase();
+    const isYouTube = host.includes('youtube.com') || host.includes('youtu.be');
+    if (isYouTube) {
+      // Preserve identity params so each video/search is a distinct URL.
+      const keep = new URLSearchParams();
+      for (const k of ['v', 'list', 't', 's', 'search_query', 'q']) {
+        const val = urlObj.searchParams.get(k);
+        if (val) keep.set(k, val);
+      }
+      const qs = keep.toString();
+      finalUrl = `${urlObj.origin}${urlObj.pathname}${qs ? '?' + qs : ''}`;
+    } else {
+      finalUrl = `${urlObj.origin}${urlObj.pathname}`;
+    }
   }
 
   let domain = urlObj.hostname;
@@ -142,15 +195,21 @@ async function startSession(tab, windowId) {
   const processedInfo = processUrl(tab.url);
   if (!processedInfo) return; // Skip internal pages if configured
 
+  // Redaction mode: persist only the user-typed activity. Real title/URL
+  // are dropped here and never reach currentSession, the queue, or storage.
+  const sessUrl = privacyRedact.on ? REDACTED_URL : processedInfo.url;
+  const sessDomain = privacyRedact.on ? REDACTED_DOMAIN : processedInfo.domain;
+  const sessTitle = privacyRedact.on ? redactedActivity() : (tab.title || '');
+
   const now = Date.now();
   currentSession = {
     id: crypto.randomUUID(),
     start: new Date(now).toISOString(),
     tabId: tab.id,
     windowId: windowId,
-    url: processedInfo.url,
-    domain: processedInfo.domain,
-    title: tab.title || '',
+    url: sessUrl,
+    domain: sessDomain,
+    title: sessTitle,
     audible: tab.audible || false,
     audibleIdleStart: null,
     lastHeartbeat: now,       // Heartbeat: tracks last known user activity in this session
@@ -269,8 +328,14 @@ async function checkActiveSession() {
 
     const now = Date.now();
 
+    // Effective identity values: under redaction mode the real title/URL
+    // are replaced before any comparison or storage, so mode transitions
+    // (real <-> redacted) naturally end the old session via URL mismatch.
+    const effUrl = privacyRedact.on ? REDACTED_URL : processed.url;
+    const effTitle = privacyRedact.on ? redactedActivity() : (activeTab.title || '');
+
     // Check if continuing current session
-    if (currentSession && currentSession.tabId === activeTab.id && currentSession.url === processed.url) {
+    if (currentSession && currentSession.tabId === activeTab.id && currentSession.url === effUrl) {
       const staleness = now - (currentSession.lastHeartbeat || new Date(currentSession.start).getTime());
       if (staleness > STALE_THRESHOLD_MS) {
         // Gap indicates sleep or system suspend: end old session capped at last heartbeat, start fresh
@@ -279,9 +344,20 @@ async function checkActiveSession() {
         return;
       }
 
-      // Update in-place properties if changed
-      if (activeTab.title && activeTab.title !== currentSession.title) {
-        currentSession.title = activeTab.title;
+      // Title changed while URL looks identical (YouTube SPA navigation,
+      // history.pushState, or stripped params): this is a NEW video/page.
+      // Split instead of overwriting in-place, otherwise a 60-min block
+      // keeps only the final title. Skipped in redaction mode: the stored
+      // title is the user's fixed activity text, never the live tab title.
+      if (!privacyRedact.on && effTitle && effTitle !== currentSession.title) {
+        const normOld = (currentSession.title || '').replace(/^\(\d+\)\s*/, '').trim().toLowerCase();
+        const normNew = effTitle.replace(/^\(\d+\)\s*/, '').trim().toLowerCase();
+        if (normOld && normNew && normOld !== normNew) {
+          await endCurrentSession(now);
+          await startSession(activeTab, win.id);
+          return;
+        }
+        currentSession.title = effTitle;
       }
       if (activeTab.audible !== undefined) {
         currentSession.audible = currentSession.audible || activeTab.audible;
@@ -437,6 +513,61 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   if (currentSession && currentSession.windowId === windowId) {
     await endCurrentSession();
   }
+});
+
+// ── REDACTION MODE control (popup messages) ───────────────────────────
+// Start: caps any live real session, then all new sessions store only the
+// user-typed activity (title), url "", domain "private".
+// Stop: caps the redacted session, normal tracking resumes immediately.
+// Update: swaps the activity text mid-span via a clean session split.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  (async () => {
+    if (!stateLoaded) {
+      await loadSettings();
+      await loadState();
+      stateLoaded = true;
+    }
+    if (!msg || typeof msg.type !== 'string') {
+      sendResponse({ ok: false, error: 'bad-message' });
+      return;
+    }
+    if (msg.type === 'privacy-start') {
+      const activity = String((msg.activity || '')).trim();
+      if (!activity) {
+        sendResponse({ ok: false, error: 'empty-activity' });
+        return;
+      }
+      await endCurrentSession();
+      privacyRedact = { on: true, activity, since: Date.now() };
+      await savePrivacyRedact();
+      updatePrivacyBadge();
+      await checkActiveSession();
+      sendResponse({ ok: true, state: privacyRedact });
+    } else if (msg.type === 'privacy-stop') {
+      await endCurrentSession();
+      privacyRedact = { on: false, activity: '', since: 0 };
+      await savePrivacyRedact();
+      updatePrivacyBadge();
+      await checkActiveSession();
+      sendResponse({ ok: true, state: privacyRedact });
+    } else if (msg.type === 'privacy-update') {
+      const activity = String((msg.activity || '')).trim();
+      if (!privacyRedact.on || !activity) {
+        sendResponse({ ok: false, error: 'not-active-or-empty' });
+        return;
+      }
+      await endCurrentSession();
+      privacyRedact = { ...privacyRedact, activity };
+      await savePrivacyRedact();
+      await checkActiveSession();
+      sendResponse({ ok: true, state: privacyRedact });
+    } else if (msg.type === 'privacy-state') {
+      sendResponse({ ok: true, state: privacyRedact });
+    } else {
+      sendResponse({ ok: false, error: 'unknown-message' });
+    }
+  })();
+  return true; // async response
 });
 
 // Idle detection: stop tracking if zero user activity for 5 minutes (300 seconds),
