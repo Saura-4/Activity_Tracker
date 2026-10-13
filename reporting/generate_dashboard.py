@@ -120,6 +120,37 @@ def generate_dashboard_files(data_dir_str: Any = "Record", output_str: str = "Re
         except Exception as e:
             print(f"Warning: Failed to load analysis {f.name}: {e}", file=sys.stderr)
 
+    # Auto-resync reports if analysis markdown was created or updated with labels
+    report_file_map = {f.stem: f for f in report_candidates if not f.name.endswith(".chat.json")}
+    for d_key, content in analyses_data.items():
+        if "<!--" in content and "labels" in content:
+            rep = reports_data.get(d_key)
+            needs_resync = False
+            a_files = [f for f in analysis_candidates if f.stem == d_key]
+            if a_files:
+                a_file = a_files[0]
+                if rep is None:
+                    needs_resync = True
+                elif d_key in report_file_map:
+                    if a_file.stat().st_mtime > report_file_map[d_key].stat().st_mtime:
+                        needs_resync = True
+                    else:
+                        lt = rep.get("label_totals", {})
+                        if not lt or all(v.get("duration_seconds", 0) == 0 for v in lt.values()):
+                            needs_resync = True
+
+            if needs_resync:
+                try:
+                    from collector.config import get_config
+                    from reporting.generate_report import generate_single_day_report, write_report
+                    cfg = get_config()
+                    updated_report = generate_single_day_report(cfg, d_key)
+                    write_report(cfg, updated_report, f"{d_key}.json")
+                    reports_data[d_key] = updated_report
+                    print(f"Auto-resynced report with updated labels for: {d_key}")
+                except Exception as e:
+                    print(f"Notice: Could not auto-resync report for {d_key}: {e}", file=sys.stderr)
+
     today_str = datetime.now().strftime("%Y-%m-%d")
     if today_str not in reports_data:
         try:

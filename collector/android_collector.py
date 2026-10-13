@@ -121,11 +121,20 @@ def get_connected_devices(adb_path: str) -> List[str]:
         return []
 
 
-def connect_device(adb_path: str, ip: str, port: int = 5555) -> bool:
+def enable_device_tcpip(adb_path: str, serial: str, port: int = 5555) -> bool:
+    """Enable ADB over TCP/IP on a USB-connected device."""
+    try:
+        res = subprocess.run([adb_path, "-s", serial, "tcpip", str(port)], capture_output=True, text=True, timeout=5)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def connect_device(adb_path: str, ip: str, port: int = 5555, timeout: float = 3.0) -> bool:
     """Attempt wireless ADB connection to target IP and port."""
     target = f"{ip}:{port}"
     try:
-        res = subprocess.run([adb_path, "connect", target], capture_output=True, text=True, timeout=8)
+        res = subprocess.run([adb_path, "connect", target], capture_output=True, text=True, timeout=timeout)
         output = res.stdout.strip().lower()
         if "connected" in output or "already connected" in output:
             return True
@@ -135,23 +144,31 @@ def connect_device(adb_path: str, ip: str, port: int = 5555) -> bool:
 
 
 def get_wifi_gateway_ip() -> Optional[str]:
-    """Extract default gateway for the active Wi-Fi adapter via ipconfig."""
+    """Extract IPv4 default gateway for the active Wi-Fi adapter via ipconfig."""
     try:
         out = subprocess.check_output("ipconfig", text=True, errors="replace")
         in_wifi = False
+        in_gateway = False
+        ipv4_regex = re.compile(r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b')
         for line in out.splitlines():
             line_lower = line.lower()
             if "wireless lan adapter wi-fi:" in line_lower or "adapter wi-fi:" in line_lower:
                 in_wifi = True
+                in_gateway = False
                 continue
             if in_wifi and line.strip() and not line.startswith(" "):
                 break
-            if in_wifi and "default gateway" in line_lower:
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    gw = parts[1].strip()
-                    if gw and gw != "0.0.0.0":
-                        return gw
+            if in_wifi:
+                if "default gateway" in line_lower:
+                    in_gateway = True
+                if in_gateway:
+                    m = ipv4_regex.search(line)
+                    if m:
+                        gw = m.group(0)
+                        if gw != "0.0.0.0":
+                            return gw
+                    elif ":" in line and "default gateway" not in line_lower:
+                        in_gateway = False
     except Exception:
         pass
     return None
@@ -166,15 +183,22 @@ def get_target_device(adb_path: str, configured_ip: Optional[str] = None, port: 
         if ":" in d:
             return d
 
-    # 2. List candidate IPs to probe
-    candidates = []
-    if configured_ip:
-        candidates.append(configured_ip)
+    # 2. If a USB device is plugged in, auto-arm TCP mode (tcpip 5555) on it
+    # so that wireless works seamlessly as soon as USB is unplugged!
+    for d in devices:
+        if ":" not in d:
+            print(f"USB device detected [{d}]. Enabling wireless TCP mode on port {port}...")
+            enable_device_tcpip(adb_path, d, port)
 
-    # Automatically probe Wi-Fi gateway (useful when laptop is on phone's hotspot)
+    # 3. List candidate IPs to probe
+    candidates = []
+    # Wi-Fi gateway is probed first (when PC is on phone hotspot, the phone IS the gateway)
     gw = get_wifi_gateway_ip()
     if gw and gw not in candidates:
         candidates.append(gw)
+
+    if configured_ip and configured_ip not in candidates:
+        candidates.append(configured_ip)
 
     # Standard Android hotspot fallback
     for fallback in ["192.168.43.1"]:
@@ -183,13 +207,13 @@ def get_target_device(adb_path: str, configured_ip: Optional[str] = None, port: 
 
     # Try connecting to candidate IPs
     for ip in candidates:
-        if connect_device(adb_path, ip, port):
+        if connect_device(adb_path, ip, port, timeout=3.0):
             devices = get_connected_devices(adb_path)
             for d in devices:
                 if ip in d:
                     return d
 
-    # 3. If any USB device is connected, use it
+    # 4. If wireless connect did not succeed, use USB device if connected
     if devices:
         return devices[0]
 
@@ -516,8 +540,11 @@ def sync_mobile_activity(
     serial = get_target_device(adb_path, configured_ip=device_ip, port=port)
     if not serial:
         raise ConnectionError(
-            f"No Android device found. Make sure your phone is connected wirelessly to {device_ip}:{port} "
-            f"or connected via USB."
+            f"No Android device found on {device_ip}:{port} or USB.\n"
+            f"If you recently restarted your phone, Android disables wireless ADB on reboot.\n"
+            f"To re-enable wireless sync:\n"
+            f"  1. Plug phone into USB once and re-run this script (or 'adb tcpip {port}').\n"
+            f"  2. Once re-enabled, you can unplug USB and sync wirelessly over hotspot!"
         )
 
     with mobile_sync_lock(Path(cfg["data_directory"])):

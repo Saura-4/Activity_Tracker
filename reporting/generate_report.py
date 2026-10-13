@@ -1105,6 +1105,59 @@ def build_pc_timeline(
                     carved = carve_window_with_extension_events(s_act, e_act, vscode_events, "vscode", app, win_title=title)
                     pc_timeline_events.extend(carved)
 
+    # Preserve audible browser media during idle intervals.
+    # When users watch streams/videos without moving mouse/keyboard (>300s),
+    # desktop watcher truncates the foreground window and enters idle,
+    # but browser extension continues tracking active audible playback.
+    covered_spans = compute_union_intervals([(e["_start_dt"], e["_end_dt"]) for e in pc_timeline_events])
+    audible_browser_events = [
+        be for be in browser_events
+        if (be.get("context", {}).get("audible") is True or
+            any(d in (be.get("context", {}).get("domain") or "").lower() for d in KNOWN_MEDIA_DOMAINS))
+    ]
+
+    for id_s, id_e in compute_union_intervals(idle_intervals):
+        safe_idle_pieces = subtract_intervals([(id_s, id_e)], hard_clip_intervals)
+        for s_safe, e_safe in safe_idle_pieces:
+            uncovered_idle = subtract_intervals([(s_safe, e_safe)], covered_spans)
+            for u_s, u_e in uncovered_idle:
+                matching_audible = [
+                    be for be in audible_browser_events
+                    if max(u_s, be["_start_dt"]) < min(u_e, be["_end_dt"])
+                ]
+                if not matching_audible:
+                    continue
+
+                aud_spans = []
+                for be in matching_audible:
+                    int_s = max(u_s, be["_start_dt"])
+                    int_e = min(u_e, be["_end_dt"])
+                    if (int_e - int_s).total_seconds() > 0.001:
+                        cap_limit = id_s + timedelta(seconds=MEDIA_IDLE_OVERRIDE_CAP_SECONDS)
+                        int_e = min(int_e, cap_limit)
+                        if (int_e - int_s).total_seconds() > 0.001:
+                            aud_spans.append((int_s, int_e))
+
+                aud_spans = compute_union_intervals(aud_spans)
+                for a_s, a_e in aud_spans:
+                    overlapping = [
+                        be for be in matching_audible
+                        if max(a_s, be["_start_dt"]) < min(a_e, be["_end_dt"])
+                    ]
+                    if not overlapping:
+                        continue
+                    sample_be = max(
+                        overlapping,
+                        key=lambda x: (min(a_e, x["_end_dt"]) - max(a_s, x["_start_dt"])).total_seconds()
+                    )
+                    br_type = (sample_be.get("context", {}).get("browser") or "browser").lower()
+                    br_name = "Brave Browser" if "brave" in br_type else ("Google Chrome" if "chrome" in br_type else "Browser")
+
+                    carved = carve_window_with_extension_events(
+                        a_s, a_e, matching_audible, br_type, br_name, win_title=""
+                    )
+                    pc_timeline_events.extend(carved)
+
     pc_timeline_events.sort(key=lambda x: (x["_start_dt"], x["_end_dt"]))
     return pc_timeline_events, fallback_events, watcher_offline_ranges, fallback_ranges
 
